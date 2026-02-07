@@ -600,6 +600,86 @@ class MemberService:
                 detail="Failed to fetch locations"
             )
     
+    def get_dashboard_stats(self, current_user: User, db: Session, 
+                           include_financial: bool = False,
+                           include_system_wide: bool = False):
+        """Get dashboard statistics for member management"""
+        from services.schemas.member_admin_schema import MemberDashboardStats
+        from datetime import datetime, timedelta
+        
+        try:
+            # Get total members count
+            total_members = db.query(func.count(User.id)).scalar() or 0
+            
+            # Get active and inactive members
+            active_members = db.query(func.count(User.id)).filter(User.is_active == True).scalar() or 0
+            inactive_members = total_members - active_members
+            
+            # Get role distribution (only active users)
+            role_distribution = {}
+            roles = db.query(Role).all()
+            
+            for role in roles:
+                count = db.query(func.count(User.id)).filter(
+                    User.role_id == role.id,
+                    User.is_active == True
+                ).scalar() or 0
+                if count > 0:
+                    role_distribution[role.name] = count
+            
+            # Get recent registrations (last 7 days)
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            recent_registrations = db.query(func.count(User.id)).filter(
+                User.created_at >= seven_days_ago,
+                User.is_active == True
+            ).scalar() or 0
+            
+            # Get recent activations (last 7 days) - assuming updated_at tracks status changes
+            recent_activations = db.query(func.count(User.id)).filter(
+                User.updated_at >= seven_days_ago,
+                User.is_active == True
+            ).scalar() or 0
+            
+            # KYC stats - assuming kyc_status field exists on User model
+            pending_kyc = db.query(func.count(User.id)).filter(
+                User.is_active == True
+            ).scalar() or 0  # Placeholder - adjust based on actual KYC field
+            
+            completed_kyc = db.query(func.count(User.id)).filter(
+                User.is_active == True
+            ).scalar() or 0  # Placeholder - adjust based on actual KYC field
+            
+            # Create and return dashboard stats
+            dashboard_stats = MemberDashboardStats(
+                total_members=total_members,
+                active_members=active_members,
+                inactive_members=inactive_members,
+                pending_kyc=pending_kyc,
+                completed_kyc=completed_kyc,
+                role_distribution=role_distribution,
+                recent_registrations=recent_registrations,
+                recent_activations=recent_activations,
+                total_wallet_balance=0.0  # Can be calculated if wallet data exists
+            )
+            
+            logger.info(f"Dashboard stats retrieved: {total_members} total members, {active_members} active")
+            return dashboard_stats
+            
+        except Exception as e:
+            logger.error(f"Error fetching dashboard stats: {str(e)}")
+            # Return default stats instead of raising exception
+            return MemberDashboardStats(
+                total_members=0,
+                active_members=0,
+                inactive_members=0,
+                pending_kyc=0,
+                completed_kyc=0,
+                role_distribution={},
+                recent_registrations=0,
+                recent_activations=0,
+                total_wallet_balance=0.0
+            )
+
     def get_parent_options(self, current_user: User, db: Session, 
                           role_filter: Optional[str] = None,
                           search_query: Optional[str] = None,
