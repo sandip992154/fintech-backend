@@ -68,6 +68,109 @@ async def get_wallet_balance(user_id: int, db: Session = Depends(get_db)):
     except HTTPException:
         # Re-raise APIErrorResponse exceptions
         raise
+
+@router.post("/wallet/create")
+async def create_wallet_for_user(
+    user_data: dict,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """
+    Create a new wallet for a user.
+    """
+    logger.info(f"Wallet creation request by user {current_user.id}")
+    
+    try:
+        user_id = user_data.get("user_id") or current_user.id
+        
+        # Validate user ID
+        if not user_id or user_id <= 0:
+            raise APIErrorResponse.validation_error(
+                message="Invalid user ID provided",
+                details={
+                    "provided_user_id": user_id,
+                    "action": "provide_valid_positive_user_id"
+                },
+                field="user_id"
+            )
+        
+        # Check if wallet already exists
+        existing_wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+        if existing_wallet:
+            logger.info(f"Wallet already exists for user {user_id}")
+            return {
+                "success": False,
+                "message": "Wallet already exists for this user",
+                "wallet": {
+                    "id": existing_wallet.id,
+                    "user_id": existing_wallet.user_id,
+                    "balance": float(existing_wallet.balance),
+                    "is_active": existing_wallet.is_active,
+                    "created_at": existing_wallet.last_updated
+                }
+            }
+        
+        # Create new wallet
+        new_wallet = Wallet(
+            user_id=user_id,
+            balance=0.0,
+            is_active=True
+        )
+        
+        db.add(new_wallet)
+        db.commit()
+        db.refresh(new_wallet)
+        
+        logger.info(f"Wallet created successfully for user {user_id}")
+        
+        return {
+            "success": True,
+            "message": "Wallet created successfully",
+            "wallet": {
+                "id": new_wallet.id,
+                "user_id": new_wallet.user_id,
+                "balance": float(new_wallet.balance),
+                "is_active": new_wallet.is_active,
+                "created_at": new_wallet.last_updated
+            }
+        }
+        
+    except IntegrityError as e:
+        db.rollback()
+        logger.error(f"Integrity error creating wallet: {str(e)}")
+        raise APIErrorResponse.validation_error(
+            message="Wallet already exists for this user",
+            details={
+                "user_id": user_id,
+                "error": "unique_constraint_violation",
+                "action": "use_existing_wallet_or_provide_different_user"
+            },
+            field="user_id"
+        )
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Database error creating wallet: {str(e)}")
+        raise APIErrorResponse.database_error(
+            message="Failed to create wallet",
+            details={
+                "error": "database_transaction_failed",
+                "user_id": user_id,
+                "action": "try_again_or_contact_support"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Unexpected error creating wallet: {str(e)}")
+        raise APIErrorResponse.database_error(
+            message="An unexpected error occurred while creating wallet",
+            details={
+                "error": "unexpected_wallet_creation_error",
+                "action": "contact_support"
+            }
+        )
+
     except Exception as e:
         logger.error(f"Unexpected error retrieving wallet for user {user_id}: {str(e)}")
         raise APIErrorResponse.database_error(
