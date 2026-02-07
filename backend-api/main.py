@@ -157,6 +157,9 @@ origins = [
     "https://superadmin.bandarupay.pro",
     "https://whitelable.bandarupay.pro",
     "https://backend.bandarupay.pro",
+    # Render deployed URLs
+    "https://*.render.com",
+    "https://fintech-backend-f9vu.onrender.com",
     # Development URLs
     "http://localhost:5172",
     "http://localhost:5173",
@@ -167,7 +170,9 @@ origins = [
     "http://localhost:5176",
     "http://localhost:5177",
     "http://localhost:5178",
-    "http://localhost:5179", 
+    "http://localhost:5179",
+    "http://127.0.0.1:5172",
+    "http://127.0.0.1:5173",
 ]
 
 app.add_middleware(
