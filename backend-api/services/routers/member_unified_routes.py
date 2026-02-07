@@ -252,7 +252,6 @@ def get_parent_options(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/dashboard", response_model=MemberDashboardStats)
-@require_access_level(AccessLevel.ENHANCED)
 def get_member_dashboard(
     include_financial_metrics: bool = Query(False, description="Include financial metrics (requires admin access)"),
     include_system_wide_stats: bool = Query(False, description="Include system-wide statistics (requires super access)"),
@@ -261,6 +260,20 @@ def get_member_dashboard(
 ):
     """Get dashboard statistics for member management (Enhanced+ access required)"""
     user_access = get_user_access_level(current_user.role.name)
+    
+    # Check minimum access level (Enhanced+)
+    access_hierarchy = {
+        AccessLevel.BASIC: 0,
+        AccessLevel.ENHANCED: 1, 
+        AccessLevel.ADMIN: 2,
+        AccessLevel.SUPER: 3
+    }
+    
+    if access_hierarchy[user_access] < access_hierarchy[AccessLevel.ENHANCED]:
+        raise HTTPException(
+            status_code=403,
+            detail="Dashboard access requires Enhanced+ privileges"
+        )
     
     # Validate feature access
     if include_financial_metrics and user_access not in [AccessLevel.ADMIN, AccessLevel.SUPER]:

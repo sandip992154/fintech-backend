@@ -215,7 +215,7 @@ app.include_router(user.router, prefix="/users", tags=["Users"])
 app.include_router(service.router)
 app.include_router(additional_services.router, prefix="/additional-services", tags=["Additional Services"])
 app.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
-app.include_router(transaction.router)
+app.include_router(transaction.router, prefix="/api/v1", tags=["Transactions"])
 app.include_router(commission.router)
 app.include_router(mpin_router)
 
