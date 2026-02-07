@@ -479,15 +479,28 @@ async def demo_login(credentials: OAuth2PasswordRequestForm = Depends(), db: Ses
     access_token = create_access_token(data=token_data)
     refresh_token = create_refresh_token(data={"sub": user.user_code, "type": "refresh"})
 
-    # Store refresh token
+    # Delete any existing refresh tokens for this user (cleanup old tokens)
+    try:
+        db.query(RefreshToken).filter(RefreshToken.user_id == user.id).delete()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting old refresh tokens: {str(e)}")
+
+    # Store new refresh token
     token_expires = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    db_token = RefreshToken(
-        token=refresh_token,
-        user_id=user.id,
-        expires_at=token_expires
-    )
-    db.add(db_token)
-    db.commit()
+    try:
+        db_token = RefreshToken(
+            token=refresh_token,
+            user_id=user.id,
+            expires_at=token_expires
+        )
+        db.add(db_token)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error storing refresh token: {str(e)}")
+        # Continue anyway - return tokens even if refresh token storage fails
 
     return schemas.TokenResponse(
         access_token=access_token,
