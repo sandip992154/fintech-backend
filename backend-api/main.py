@@ -157,9 +157,8 @@ origins = [
     "https://superadmin.bandarupay.pro",
     "https://whitelable.bandarupay.pro",
     "https://backend.bandarupay.pro",
-    # Render deployed URLs
-    "https://*.render.com",
-    "https://fintech-backend-f9vu.onrender.com",
+    # Render deployed URLs - ALLOW ALL RENDER DOMAINS
+    # This will match any *.onrender.com domain
     # Development URLs
     "http://localhost:5172",
     "http://localhost:5173",
@@ -175,9 +174,11 @@ origins = [
     "http://127.0.0.1:5173",
 ]
 
+# Add support for all Render domains with allow_origin_regex
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.onrender\.com",  # Allow all *.onrender.com domains
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=[
