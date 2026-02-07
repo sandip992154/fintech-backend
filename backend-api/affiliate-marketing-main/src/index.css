@@ -1,0 +1,211 @@
+/* ✅ 2. Google Fonts import must come right after */
+@import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900&display=swap");
+/* ✅ 1. Tailwind import must come first */
+@import "tailwindcss";
+
+/* ✅ 3. Now global styles and variables */
+html {
+  font-family: "Poppins", sans-serif;
+}
+
+:root {
+  --color-white: #f8f8f8;
+  --color-black: #000000;
+  --color-primary: #dcfe50;
+  --color-darkHover: #000000;
+  --color-gray: #ccc;
+}
+
+@theme {
+  /* 📱 Custom Breakpoints */
+  --breakpoint-xs: 30rem;
+  --breakpoint-2xl: 100rem;
+  --breakpoint-3xl: 120rem;
+
+  --color-white: #f8f8f8;
+  --color-black: #000000;
+  --color-primary: #dcfe50;
+  --color-darkHover: #000000;
+  --color-gray: #ccc;
+}
+
+@layer utilities {
+  .blend-soft {
+    @apply mix-blend-multiply opacity-90 brightness-100 contrast-110;
+  }
+
+  .hover-scale {
+    @apply transition-transform duration-200 ease-in-out hover:scale-107;
+  }
+
+  .maxscreen {
+    @apply max-w-[1640px] mx-auto;
+  }
+
+  .screen-margin {
+    @apply px-4 sm:px-8 md:px-16;
+  }
+  .text-h1 {
+    font-size: 50px;
+    font-weight: 700;
+    line-height: 1.2;
+    font-family: "Poppins", sans-serif;
+  }
+
+  .text-h2 {
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.2;
+    font-family: "Poppins", sans-serif;
+  }
+
+  .text-paragraph {
+    font-size: 15px;
+    font-weight: 400;
+    font-family: "Poppins", sans-serif;
+  }
+
+  .text-paragraph-bold {
+    font-size: 15px;
+    font-weight: 600;
+    font-family: "Poppins", sans-serif;
+  }
+
+  /* Color Utilities */
+  .border-primary {
+    border-color: var(--color-primary);
+  }
+
+  .border-darkHover {
+    border-color: var(--color-darkHover);
+  }
+
+  .bg-primary {
+    background-color: var(--color-primary);
+  }
+
+  .hover-bg-primary:hover {
+    background-color: var(--color-primary);
+    color: var(--color-black);
+  }
+
+  .bg-darkHover {
+    background-color: var(--color-darkHover);
+  }
+
+  .bg-lightBg {
+    background-color: var(--color-white);
+  }
+
+  .text-customGray {
+    color: var(--color-gray);
+  }
+
+  .text-primary {
+    color: var(--color-primary);
+  }
+
+  .text-darkHover {
+    color: var(--color-darkHover);
+  }
+
+  .text-customWhite {
+    color: var(--color-white);
+  }
+
+  .hover-bg-darkHover:hover {
+    background-color: var(--color-darkHover);
+    color: var(--color-white);
+  }
+
+  .hover-bg-primary:hover {
+    background-color: var(--color-primary);
+    color: var(--color-black);
+  }
+
+  /* Layout */
+  .grid-products {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+
+  @media (min-width: 640px) {
+    .grid-products {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  @media (min-width: 768px) {
+    .grid-products {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+  .header {
+    background-color: #000;
+    color: #fff;
+  }
+  .footer {
+    background-color: #000;
+    color: #fff;
+    font-size: 0.875rem;
+    padding-top: 2.5rem;
+    padding-bottom: 2.5rem;
+  }
+
+  .footer-link {
+    color: var(--color-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .footer-link:hover {
+    text-decoration: underline;
+  }
+}
+
+@layer components {
+  .btn-cta {
+    border-radius: 5px;
+    font-weight: 700;
+    background-color: var(--color-primary);
+    color: #000;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    transition: all 0.2s ease-in-out;
+  }
+
+  .btn-cta:hover {
+    background-color: var(--color-darkHover);
+    color: #fff;
+  }
+
+  .btn-dark-outline {
+    padding: 0.5rem 1.5rem;
+    border-radius: 9999px;
+    font-weight: 700;
+    background-color: var(--color-darkHover);
+    color: #fff;
+    transition: all 0.2s ease-in-out;
+  }
+
+  .btn-dark-outline:hover {
+    background-color: var(--color-primary);
+    color: #000;
+  }
+
+  .btn-compare {
+    padding: 0.25rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border-radius: 9999px;
+    background-color: var(--color-primary);
+    color: #000;
+    transition: all 0.2s ease-in-out;
+  }
+
+  .btn-compare:hover {
+    background-color: var(--color-darkHover);
+    color: #fff;
+  }
+}

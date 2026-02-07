@@ -1,0 +1,74 @@
+{
+  "products": [
+    {
+      "id": "ee449b0c-5eef-4cbf-9582-c87552c5688f",
+      "title": "Samsung Mobile Phone 1",
+      "brand": "Samsung",
+      "price": "₹48,900",
+      "discountprice": "₹48,689",
+      "rating": "4.0",
+      "affiliatelink": "https://www.amazon.in/mobile-phones/b?node=1389401031",
+      "offers": [
+        "Bank Offer Available",
+        "EMI Available"
+      ],
+      "timestamp": 1764650664
+    },
+    {
+      "id": "27b85804-9b5c-409d-9a4f-ba47791c8a0a",
+      "title": "OnePlus Mobile Phone 2",
+      "brand": "OnePlus",
+      "price": "₹53,246",
+      "discountprice": "₹58,265",
+      "rating": "3.6",
+      "affiliatelink": "https://www.amazon.in/mobile-phones/b?node=1389401031",
+      "offers": [
+        "Bank Offer Available",
+        "EMI Available"
+      ],
+      "timestamp": 1764650664
+    },
+    {
+      "id": "848e2c4e-ea92-4be9-9359-c03f16852885",
+      "title": "OnePlus Mobile Phone 3",
+      "brand": "OnePlus",
+      "price": "₹18,851",
+      "discountprice": "₹19,397",
+      "rating": "3.9",
+      "affiliatelink": "https://www.amazon.in/mobile-phones/b?node=1389401031",
+      "offers": [
+        "Bank Offer Available",
+        "EMI Available"
+      ],
+      "timestamp": 1764650664
+    },
+    {
+      "id": "f7bc47d6-da90-4f0b-adf8-80cdd94d3c77",
+      "title": "Xiaomi Mobile Phone 4",
+      "brand": "Xiaomi",
+      "price": "₹37,945",
+      "discountprice": "₹25,871",
+      "rating": "4.2",
+      "affiliatelink": "https://www.amazon.in/mobile-phones/b?node=1389401031",
+      "offers": [
+        "Bank Offer Available",
+        "EMI Available"
+      ],
+      "timestamp": 1764650664
+    },
+    {
+      "id": "4b0f9c64-6560-4d43-a47e-0cb4df7752af",
+      "title": "Xiaomi Mobile Phone 5",
+      "brand": "Xiaomi",
+      "price": "₹76,492",
+      "discountprice": "₹47,508",
+      "rating": "3.9",
+      "affiliatelink": "https://www.amazon.in/mobile-phones/b?node=1389401031",
+      "offers": [
+        "Bank Offer Available",
+        "EMI Available"
+      ],
+      "timestamp": 1764650664
+    }
+  ]
+}

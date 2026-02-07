@@ -1,0 +1,60 @@
+{
+  "products": [
+    {
+      "id": "be3e9537-9707-4e36-bc0e-9ba8d6ce56a3",
+      "title": "Samsung Latest Mobile 1",
+      "brand": "Samsung",
+      "price": "₹35,884",
+      "discountprice": "₹54,219",
+      "rating": "4.2",
+      "affiliatelink": "https://www.croma.com/mobiles-tablets/mobiles/c/111",
+      "offers": [
+        "Croma Extended Warranty",
+        "Exchange Bonus"
+      ],
+      "timestamp": 1764650673
+    },
+    {
+      "id": "6810b6c3-16f9-4481-bf55-33df1c066bae",
+      "title": "Apple Latest Mobile 2",
+      "brand": "Apple",
+      "price": "₹29,662",
+      "discountprice": "₹76,696",
+      "rating": "4.6",
+      "affiliatelink": "https://www.croma.com/mobiles-tablets/mobiles/c/111",
+      "offers": [
+        "Croma Extended Warranty",
+        "Exchange Bonus"
+      ],
+      "timestamp": 1764650673
+    },
+    {
+      "id": "ce06c4eb-bb0d-4a76-a807-3c1d58ac1ba5",
+      "title": "Xiaomi Latest Mobile 3",
+      "brand": "Xiaomi",
+      "price": "₹24,606",
+      "discountprice": "₹64,183",
+      "rating": "4.2",
+      "affiliatelink": "https://www.croma.com/mobiles-tablets/mobiles/c/111",
+      "offers": [
+        "Croma Extended Warranty",
+        "Exchange Bonus"
+      ],
+      "timestamp": 1764650673
+    },
+    {
+      "id": "2a8db11a-8247-4557-8ff7-d74e82b11d4a",
+      "title": "OnePlus Latest Mobile 4",
+      "brand": "OnePlus",
+      "price": "₹91,727",
+      "discountprice": "₹72,666",
+      "rating": "4.3",
+      "affiliatelink": "https://www.croma.com/mobiles-tablets/mobiles/c/111",
+      "offers": [
+        "Croma Extended Warranty",
+        "Exchange Bonus"
+      ],
+      "timestamp": 1764650673
+    }
+  ]
+}

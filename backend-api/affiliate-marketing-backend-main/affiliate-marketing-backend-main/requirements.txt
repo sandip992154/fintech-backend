@@ -1,0 +1,14 @@
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+selenium==4.21.0
+beautifulsoup4==4.12.3
+pandas==2.2.2
+lxml==5.2.1
+urllib3==2.2.1
+chromedriver-autoinstaller==0.6.4
+pymongo
+watchdog
+rapidfuzz
+python-dotenv
+pymongo
+pydantic[email]

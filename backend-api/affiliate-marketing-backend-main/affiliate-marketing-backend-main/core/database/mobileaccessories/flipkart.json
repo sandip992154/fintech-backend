@@ -1,0 +1,28 @@
+{
+  "products": [
+    {
+      "id": "09a5507e-2563-4f8c-b269-f62040ce3183",
+      "title": "Wireless Charging Pad",
+      "brand": "Samsung",
+      "price": "₹2,999",
+      "discountprice": "₹2,499",
+      "rating": "4.2",
+      "affiliatelink": "https://www.amazon.in/mobile-accessories",
+      "offers": [
+        "Free Shipping"
+      ]
+    },
+    {
+      "id": "67ffe2e7-b8a6-41bc-a368-25c7849222d4",
+      "title": "Fast Charging Cable",
+      "brand": "Apple",
+      "price": "₹1,999",
+      "discountprice": "₹1,699",
+      "rating": "4.5",
+      "affiliatelink": "https://www.flipkart.com/mobile-accessories",
+      "offers": [
+        "1 Year Warranty"
+      ]
+    }
+  ]
+}

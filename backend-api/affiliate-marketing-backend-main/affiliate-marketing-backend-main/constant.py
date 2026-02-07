@@ -1,0 +1,5 @@
+# DATABASE_PATH = "./database/"
+# MOBILE_DATA_FILE = f"{DATABASE_PATH}mobile.json"
+# LAPTOP_DATA_FILE = f"{DATABASE_PATH}laptops.json" 
+# ACCESSORIES_DATA_FILE = f"{DATABASE_PATH}accessories.json"
+ALL_DATA_FILE =r"C:\Users\sHIVAM nAIK\OneDrive\Desktop\Scraping_Ecommerce-1\extra_files\productlisting.json"
