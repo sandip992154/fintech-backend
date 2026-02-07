@@ -15,6 +15,7 @@ from services.schemas.transaction_schemas import (
     TransactionCreate, TransactionOut, WalletOut,
     WalletTransactionCreate, WalletTransactionOut
 )
+from services.auth.auth import get_current_user
 from utils.error_handlers import APIErrorResponse, handle_database_exceptions, validate_required_fields, validate_user_permissions
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
