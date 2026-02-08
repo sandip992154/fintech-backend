@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
 import uuid
@@ -8,7 +8,7 @@ from database.database import get_db
 from services.auth.auth import get_current_user
 from services.models.transaction_models import Wallet, WalletTransaction
 from services.models.models import User
-from services.schemas.transaction_schemas import WalletOut, WalletTransactionOut
+from services.schemas.transaction_schemas import WalletOut, WalletTransactionOut, WalletTopupRequest
 
 router = APIRouter(tags=["Transactions"])
 
@@ -100,14 +100,14 @@ async def get_wallet_balance(
 @router.post("/wallet/topup/{user_id}")
 async def wallet_topup(
     user_id: int,
-    request_data: Dict[str, Any],
+    data: WalletTopupRequest = Body(...),
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Load/Topup wallet with amount and optional remark"""
     try:
-        amount = float(request_data.get("amount", 0))
-        remark = request_data.get("remark", "")
+        amount = float(data.amount)
+        remark = data.remark or ""
         
         if amount <= 0:
             raise HTTPException(

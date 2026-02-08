@@ -74,6 +74,11 @@ class WalletOut(WalletBase):
     class Config:
         from_attributes = True
 
+# Wallet Topup Request Schema
+class WalletTopupRequest(BaseModel):
+    amount: float = Field(..., gt=0, description="Amount to topup (must be greater than 0)")
+    remark: Optional[str] = Field(None, max_length=500, description="Optional remark for the transaction")
+
 # Wallet Transaction Schemas
 class WalletTransactionBase(BaseModel):
     amount: Decimal = Field(..., ge=0)
