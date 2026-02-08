@@ -79,6 +79,7 @@ class WalletTransactionBase(BaseModel):
     amount: Decimal = Field(..., ge=0)
     transaction_type: str
     reference_id: Optional[str] = None
+    remark: Optional[str] = None
 
 class WalletTransactionCreate(WalletTransactionBase):
     wallet_id: int

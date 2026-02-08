@@ -83,6 +83,7 @@ class WalletTransaction(Base):
     amount = Column(Float)
     transaction_type = Column(String(50))  # credit/debit
     reference_id = Column(String(100))  # Reference to main transaction if applicable
+    remark = Column(String(500), nullable=True)  # Additional remark or description
     balance_after = Column(Float)  # Balance after this transaction
     created_at = Column(DateTime, default=datetime.utcnow)
     
