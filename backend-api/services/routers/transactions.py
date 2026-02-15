@@ -100,9 +100,9 @@ async def get_wallet_balance(
 @router.post("/wallet/topup/{user_id}")
 async def wallet_topup(
     user_id: int,
-    data: WalletTopupRequest = Body(...),
     current_user = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    data: WalletTopupRequest = Body(...)
 ):
     """Load/Topup wallet with amount and optional remark"""
     try:

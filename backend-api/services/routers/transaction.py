@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List
@@ -14,7 +14,7 @@ from services.models.transaction_models import (
 from services.models.models import User
 from services.schemas.transaction_schemas import (
     TransactionCreate, TransactionOut, WalletOut,
-    WalletTransactionCreate, WalletTransactionOut
+    WalletTransactionCreate, WalletTransactionOut, WalletTopupRequest
 )
 from services.auth.auth import get_current_user
 from utils.error_handlers import APIErrorResponse, handle_database_exceptions, validate_required_fields, validate_user_permissions
@@ -170,16 +170,20 @@ async def create_wallet_for_user(
             }
         )
 
-@router.post("/wallet/topup/{user_id}")
+@router.post("/transactions/wallet/topup/{user_id}")
 async def topup_wallet(
     user_id: int,
-    amount: Decimal,
-    db: Session = Depends(get_db)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    data: WalletTopupRequest = Body(...)
 ):
     """
     Top up user wallet with comprehensive validation and error handling.
     """
-    logger.info(f"Wallet topup request for user {user_id}, amount: {amount}")
+    amount = Decimal(str(data.amount))
+    remark = data.remark or ""
+    
+    logger.info(f"Wallet topup request for user {user_id}, amount: {amount}, remark: {remark}")
     
     try:
         # Validate user ID
@@ -250,6 +254,7 @@ async def topup_wallet(
             amount=amount,
             transaction_type="credit",
             reference_id=reference_id,
+            remark=remark,
             balance_after=new_balance
         )
         
@@ -262,13 +267,17 @@ async def topup_wallet(
         
         logger.info(f"Wallet topup successful for user {user_id}: {amount} -> balance: {wallet.balance}")
         return {
+            "success": True,
             "message": "Wallet topped up successfully",
-            "status": "success",
-            "user_id": user_id,
-            "topup_amount": str(amount),
-            "new_balance": str(wallet.balance),
-            "transaction_id": reference_id,
-            "timestamp": wallet_txn.created_at
+            "data": {
+                "id": wallet.id,
+                "user_id": wallet.user_id,
+                "balance": float(wallet.balance),
+                "transaction_id": reference_id,
+                "amount_added": float(amount),
+                "remark": remark,
+                "last_updated": wallet.last_updated.isoformat() if wallet.last_updated else None
+            }
         }
 
     except (InvalidOperation, ValueError) as e:
