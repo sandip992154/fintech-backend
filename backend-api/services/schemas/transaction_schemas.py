@@ -79,6 +79,11 @@ class WalletTopupRequest(BaseModel):
     amount: float = Field(..., gt=0, description="Amount to topup (must be greater than 0)")
     remark: Optional[str] = Field(None, max_length=500, description="Optional remark for the transaction")
 
+class WalletTransferRequest(BaseModel):
+    amount: float = Field(..., gt=0, description="Amount to transfer (must be greater than 0)")
+    to_user_id: int = Field(..., gt=0, description="Recipient user ID")
+    remark: Optional[str] = Field(None, max_length=500, description="Optional remark for the transfer")
+
 # Wallet Transaction Schemas
 class WalletTransactionBase(BaseModel):
     amount: Decimal = Field(..., ge=0)

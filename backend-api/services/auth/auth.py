@@ -719,8 +719,27 @@ async def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
             db.commit()
             db.refresh(user)
             logger.info(f"✅ User created with ID={user.id}")
+            
+            # Auto-create wallet for new user
+            try:
+                from services.models.transaction_models import Wallet
+                existing_wallet = db.query(Wallet).filter(Wallet.user_id == user.id).first()
+                if not existing_wallet:
+                    new_wallet = Wallet(
+                        user_id=user.id,
+                        balance=0.0,  # Start with 0 balance
+                        is_active=True
+                    )
+                    db.add(new_wallet)
+                    db.commit()
+                    logger.info(f"✅ Wallet auto-created for user {user.id}")
+                else:
+                    logger.info(f"ℹ️ Wallet already exists for user {user.id}")
+            except Exception as wallet_error:
+                logger.error(f"⚠️ Failed to auto-create wallet for user {user.id}: {str(wallet_error)}", exc_info=True)
+                # Don't fail registration if wallet creation fails - log and continue
         except Exception as e:
-            logger.error(f"❌ User creation failed: {str(e)}", exc_info=True)
+            logger.error(f"❌ User creation/wallet setup failed: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Internal server error during user creation: {str(e)}")
 
         # Send email

@@ -15,7 +15,7 @@ from services.models.transaction_models import (
 from services.models.models import User
 from services.schemas.transaction_schemas import (
     TransactionCreate, TransactionOut, WalletOut,
-    WalletTransactionCreate, WalletTransactionOut, WalletTopupRequest
+    WalletTransactionCreate, WalletTransactionOut, WalletTopupRequest, WalletTransferRequest
 )
 from services.auth.auth import get_current_user
 from utils.error_handlers import APIErrorResponse, handle_database_exceptions, validate_required_fields, validate_user_permissions
@@ -425,85 +425,235 @@ async def get_wallet_transactions(
             }
         )
 
-@router.post("/transfer/{from_user_id}/{to_user_id}")
+@router.post("/wallet/transfer/{from_user_id}")
 async def transfer_funds(
     from_user_id: int,
-    to_user_id: int,
-    amount: Decimal,
+    transfer_data: WalletTransferRequest,
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Get source wallet
-    from_wallet = db.query(Wallet).filter(Wallet.user_id == from_user_id).first()
-    if not from_wallet:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Source wallet not found"
-        )
+    """
+    Transfer funds from one user's wallet to another user's wallet.
     
-    # Check balance
-    if from_wallet.balance < amount:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Insufficient balance"
-        )
+    Security: Only users can transfer from their own wallet (from_user_id must match current user)
     
-    # Get destination wallet
-    to_wallet = db.query(Wallet).filter(Wallet.user_id == to_user_id).first()
-    if not to_wallet:
-        to_wallet = Wallet(user_id=to_user_id, balance=Decimal("0.00"))
-        db.add(to_wallet)
-        db.commit()
-        db.refresh(to_wallet)
-
-    # Generate reference ID
-    ref_id = f"TXN-{uuid.uuid4().hex[:8]}"
-
+    Args:
+        from_user_id: Source wallet user ID (must match current user)
+        transfer_data: Transfer details (amount, to_user_id, optional remark)
+        
+    Returns:
+        201: Transfer successful with transaction details
+        400: Invalid amount or validation error
+        403: Unauthorized (trying to transfer from someone else's account)
+        404: Wallet not found
+        500: Server error
+    """
+    logger.info(f"Wallet transfer request from user {from_user_id} by current user {current_user.id}")
+    
     try:
-        # Create debit transaction
-        debit_txn = WalletTransaction(
+        # Security check: User can only transfer from their own wallet
+        if from_user_id != current_user.id:
+            logger.warning(f"⚠️ Unauthorized transfer attempt: user {current_user.id} tried to transfer from user {from_user_id}")
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "unauthorized",
+                    "message": "You can only transfer from your own wallet",
+                    "details": {
+                        "action": "use_correct_wallet"
+                    }
+                }
+            )
+        
+        # Validate amount
+        if not transfer_data.amount or transfer_data.amount <= 0:
+            logger.warning(f"Invalid transfer amount: {transfer_data.amount}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "validation_error",
+                    "message": "Transfer amount must be greater than 0",
+                    "details": {
+                        "field": "amount",
+                        "action": "provide_valid_positive_amount"
+                    }
+                }
+            )
+        
+        # Validate recipient
+        if transfer_data.to_user_id == from_user_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "validation_error",
+                    "message": "Cannot transfer to yourself",
+                    "details": {
+                        "field": "to_user_id",
+                        "action": "provide_different_recipient"
+                    }
+                }
+            )
+        
+        # Validate recipient exists
+        recipient = db.query(User).filter(User.id == transfer_data.to_user_id).first()
+        if not recipient:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "user_not_found",
+                    "message": "Recipient user not found",
+                    "details": {
+                        "user_id": transfer_data.to_user_id,
+                        "action": "verify_user_id"
+                    }
+                }
+            )
+        
+        # Get source wallet
+        from_wallet = db.query(Wallet).filter(Wallet.user_id == from_user_id).first()
+        if not from_wallet:
+            logger.error(f"Source wallet not found for user {from_user_id}")
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "wallet_not_found",
+                    "message": "Your wallet not found. Please create a wallet first.",
+                    "details": {
+                        "user_id": from_user_id,
+                        "action": "create_wallet_first"
+                    }
+                }
+            )
+        
+        # Convert amount to float
+        amount_float = float(transfer_data.amount)
+        
+        # Check sufficient balance
+        if from_wallet.balance < amount_float:
+            logger.warning(f"Insufficient balance for transfer: has {from_wallet.balance}, needs {amount_float}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "insufficient_balance",
+                    "message": f"Insufficient balance. Available: ₹{from_wallet.balance}, Required: ₹{amount_float}",
+                    "details": {
+                        "available_balance": from_wallet.balance,
+                        "required_amount": amount_float,
+                        "shortfall": amount_float - from_wallet.balance,
+                        "action": "add_funds_or_reduce_transfer_amount"
+                    }
+                }
+            )
+        
+        # Get destination wallet, create if needed
+        to_wallet = db.query(Wallet).filter(Wallet.user_id == transfer_data.to_user_id).first()
+        if not to_wallet:
+            logger.info(f"Creating wallet for recipient user {transfer_data.to_user_id}")
+            to_wallet = Wallet(
+                user_id=transfer_data.to_user_id,
+                balance=0.0,
+                is_active=True
+            )
+            db.add(to_wallet)
+            db.flush()
+        
+        # Generate reference ID
+        reference_id = f"TXF-{uuid.uuid4().hex[:12].upper()}"
+        
+        # Update wallet balances
+        from_wallet.balance -= amount_float
+        to_wallet.balance += amount_float
+        
+        # Create debit transaction for sender
+        from_transaction = WalletTransaction(
             wallet_id=from_wallet.id,
-            amount=amount,
+            amount=amount_float,
             transaction_type="debit",
-            reference_id=ref_id,
-            balance_after=from_wallet.balance - amount
+            reference_id=reference_id,
+            remark=transfer_data.remark or f"Transferred to user {transfer_data.to_user_id}",
+            balance_after=from_wallet.balance,
+            created_at=datetime.utcnow()
         )
         
-        # Create credit transaction
-        credit_txn = WalletTransaction(
+        # Create credit transaction for recipient
+        to_transaction = WalletTransaction(
             wallet_id=to_wallet.id,
-            amount=amount,
+            amount=amount_float,
             transaction_type="credit",
-            reference_id=ref_id,
-            balance_after=to_wallet.balance + amount
+            reference_id=reference_id,
+            remark=transfer_data.remark or f"Received from user {from_user_id}",
+            balance_after=to_wallet.balance,
+            created_at=datetime.utcnow()
         )
         
-        # Update balances
-        from_wallet.balance -= amount
-        to_wallet.balance += amount
-        
-        db.add_all([debit_txn, credit_txn])
+        # Add and commit all changes
+        db.add_all([from_transaction, to_transaction])
         db.commit()
+        db.refresh(from_wallet)
+        db.refresh(to_wallet)
+        
+        logger.info(f"✅ Transfer successful: {amount_float} from user {from_user_id} to user {transfer_data.to_user_id}, ref_id: {reference_id}")
         
         return {
-            "message": "Transfer successful",
-            "transaction_id": ref_id,
-            "from_balance": str(from_wallet.balance),
-            "to_balance": str(to_wallet.balance)
+            "success": True,
+            "message": f"₹{amount_float} transferred successfully",
+            "data": {
+                "reference_id": reference_id,
+                "from_user_id": from_user_id,
+                "to_user_id": transfer_data.to_user_id,
+                "amount": amount_float,
+                "from_balance_after": float(from_wallet.balance),
+                "to_balance_after": float(to_wallet.balance),
+                "timestamp": datetime.utcnow().isoformat(),
+                "recipient_name": recipient.full_name,
+                "recipient_email": recipient.email
+            }
         }
+        
+    except HTTPException:
+        raise
     except SQLAlchemyError as e:
         db.rollback()
-        logger.error(f"Database error during transfer: {str(e)}")
+        logger.error(f"Database error during transfer for user {from_user_id}: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Transfer failed due to database error"
+            status_code=500,
+            detail={
+                "error": "database_error",
+                "message": "Failed to complete transfer",
+                "details": {
+                    "error": "transaction_failed",
+                    "action": "try_again_or_contact_support"
+                }
+            }
+        )
+    except (ValueError, TypeError) as e:
+        logger.error(f"Invalid data type during transfer for user {from_user_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "validation_error",
+                "message": "Invalid amount format",
+                "details": {
+                    "error": "invalid_number_format",
+                    "action": "provide_valid_positive_number"
+                }
+            }
         )
     except Exception as e:
         db.rollback()
-        logger.error(f"Unexpected error during transfer: {str(e)}")
+        logger.error(f"Unexpected error during transfer for user {from_user_id}: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Transfer failed"
+            status_code=500,
+            detail={
+                "error": "server_error",
+                "message": "An unexpected error occurred during transfer",
+                "details": {
+                    "error": "unexpected_error",
+                    "action": "contact_support"
+                }
+            }
         )
+
 
 # Transaction Operations
 @router.post("/create", response_model=TransactionOut)
