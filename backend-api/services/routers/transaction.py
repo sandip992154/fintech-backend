@@ -20,6 +20,8 @@ from services.auth.auth import get_current_user
 from utils.error_handlers import APIErrorResponse, handle_database_exceptions, validate_required_fields, validate_user_permissions
 
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
+# ⚠️ NOTE: This router is included with /api/v1 prefix in main.py
+# So the /transactions prefix here creates /api/v1/transactions/*
 logger = logging.getLogger(__name__)
 
 # Wallet Operations
@@ -159,18 +161,7 @@ async def create_wallet_for_user(
             detail="An unexpected error occurred while creating wallet"
         )
 
-    except Exception as e:
-        logger.error(f"Unexpected error retrieving wallet for user {user_id}: {str(e)}")
-        raise APIErrorResponse.database_error(
-            message="An unexpected error occurred while retrieving wallet balance",
-            details={
-                "error": "unexpected_wallet_error",
-                "user_id": user_id,
-                "action": "contact_support"
-            }
-        )
-
-@router.post("/transactions/wallet/topup/{user_id}")
+@router.post("/wallet/topup/{user_id}")
 async def topup_wallet(
     user_id: int,
     current_user = Depends(get_current_user),
@@ -314,6 +305,103 @@ async def topup_wallet(
                 "error": "unexpected_topup_error",
                 "user_id": user_id,
                 "amount": str(amount),
+                "action": "contact_support"
+            }
+        )
+
+@router.get("/wallet/{user_id}/transactions")
+async def get_wallet_transactions(
+    user_id: int,
+    limit: int = 10,
+    offset: int = 0,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get wallet transaction history with pagination"""
+    logger.info(f"Wallet transactions request for user {user_id}, limit: {limit}, offset: {offset}")
+    
+    try:
+        # Validate user ID
+        if not user_id or user_id <= 0:
+            raise APIErrorResponse.validation_error(
+                message="Invalid user ID provided",
+                details={
+                    "provided_user_id": user_id,
+                    "action": "provide_valid_positive_user_id"
+                },
+                field="user_id"
+            )
+        
+        wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+        
+        if not wallet:
+            raise APIErrorResponse.not_found_error(
+                message="Wallet not found for this user",
+                details={
+                    "user_id": user_id,
+                    "action": "create_wallet_first"
+                },
+                resource_type="wallet"
+            )
+        
+        # Get transactions with pagination
+        transactions = db.query(WalletTransaction).filter(
+            WalletTransaction.wallet_id == wallet.id
+        ).order_by(
+            WalletTransaction.created_at.desc()
+        ).offset(offset).limit(limit).all()
+        
+        total_count = db.query(WalletTransaction).filter(
+            WalletTransaction.wallet_id == wallet.id
+        ).count()
+        
+        transaction_list = [
+            {
+                "id": txn.id,
+                "amount": float(txn.amount),
+                "type": txn.transaction_type,
+                "reference_id": txn.reference_id,
+                "remark": txn.remark,
+                "balance_after": float(txn.balance_after),
+                "created_at": txn.created_at.isoformat() if txn.created_at else None
+            }
+            for txn in transactions
+        ]
+        
+        logger.info(f"Retrieved {len(transaction_list)} transactions for user {user_id}")
+        
+        return {
+            "success": True,
+            "data": {
+                "wallet_id": wallet.id,
+                "wallet_balance": float(wallet.balance),
+                "transactions": transaction_list,
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset
+            }
+        }
+        
+    except APIErrorResponse as e:
+        logger.error(f"API error retrieving transactions for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except SQLAlchemyError as e:
+        logger.error(f"Database error retrieving wallet transactions for user {user_id}: {str(e)}")
+        raise APIErrorResponse.database_error(
+            message="Failed to retrieve wallet transactions",
+            details={
+                "error": "database_query_failed",
+                "user_id": user_id,
+                "action": "try_again_or_contact_support"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving wallet transactions for user {user_id}: {str(e)}")
+        raise APIErrorResponse.database_error(
+            message="An unexpected error occurred while retrieving transactions",
+            details={
+                "error": "unexpected_transaction_error",
+                "user_id": user_id,
                 "action": "contact_support"
             }
         )
