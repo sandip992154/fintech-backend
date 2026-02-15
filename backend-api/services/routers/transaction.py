@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List
 from decimal import Decimal, InvalidOperation
+from datetime import datetime
 import uuid
 import logging
 
@@ -171,12 +172,13 @@ async def topup_wallet(
     """
     Top up user wallet with comprehensive validation and error handling.
     """
-    amount = Decimal(str(data.amount))
-    remark = data.remark or ""
-    
-    logger.info(f"Wallet topup request for user {user_id}, amount: {amount}, remark: {remark}")
-    
     try:
+        # Convert to float immediately to avoid type conflicts
+        amount_float = float(data.amount)
+        remark = data.remark or ""
+        
+        logger.info(f"Wallet topup request for user {user_id}, amount: {amount_float}, remark: {remark}")
+        
         # Validate user ID
         if not user_id or user_id <= 0:
             raise APIErrorResponse.validation_error(
@@ -189,11 +191,11 @@ async def topup_wallet(
             )
 
         # Validate amount
-        if not amount or amount <= 0:
+        if amount_float <= 0:
             raise APIErrorResponse.validation_error(
                 message="Invalid topup amount",
                 details={
-                    "provided_amount": str(amount),
+                    "provided_amount": str(amount_float),
                     "minimum_amount": "0.01",
                     "action": "provide_positive_amount"
                 },
@@ -201,13 +203,12 @@ async def topup_wallet(
             )
 
         # Check maximum topup limit
-        max_topup = Decimal("100000.00")  # 1 lakh maximum
-        if amount > max_topup:
+        if amount_float > 100000.00:  # 1 lakh maximum
             raise APIErrorResponse.business_rule_error(
                 message="Topup amount exceeds maximum limit",
                 details={
-                    "requested_amount": str(amount),
-                    "maximum_allowed": str(max_topup),
+                    "requested_amount": str(amount_float),
+                    "maximum_allowed": "100000.00",
                     "action": "reduce_topup_amount"
                 },
                 rule="maximum_topup_limit"
@@ -217,22 +218,24 @@ async def topup_wallet(
         wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
         if not wallet:
             logger.info(f"Creating new wallet for user {user_id}")
-            wallet = Wallet(user_id=user_id, balance=Decimal("0.00"))
+            wallet = Wallet(user_id=user_id, balance=0.0, is_active=True)
             db.add(wallet)
-            db.commit()
+            db.flush()
             db.refresh(wallet)
 
+        # Calculate new balance
+        current_balance = float(wallet.balance) if wallet.balance else 0.0
+        new_balance = current_balance + amount_float
+        
         # Check balance limit after topup
-        max_balance = Decimal("500000.00")  # 5 lakh maximum balance
-        new_balance = wallet.balance + amount
-        if new_balance > max_balance:
+        if new_balance > 500000.00:  # 5 lakh maximum balance
             raise APIErrorResponse.business_rule_error(
                 message="Topup would exceed maximum wallet balance",
                 details={
-                    "current_balance": str(wallet.balance),
-                    "topup_amount": str(amount),
+                    "current_balance": str(current_balance),
+                    "topup_amount": str(amount_float),
                     "resulting_balance": str(new_balance),
-                    "maximum_balance": str(max_balance),
+                    "maximum_balance": "500000.00",
                     "action": "reduce_topup_amount_or_use_funds_first"
                 },
                 rule="maximum_wallet_balance"
@@ -242,7 +245,7 @@ async def topup_wallet(
         reference_id = f"TOPUP-{uuid.uuid4().hex[:8].upper()}"
         wallet_txn = WalletTransaction(
             wallet_id=wallet.id,
-            amount=amount,
+            amount=amount_float,
             transaction_type="credit",
             reference_id=reference_id,
             remark=remark,
@@ -251,12 +254,15 @@ async def topup_wallet(
         
         # Update wallet balance
         wallet.balance = new_balance
+        wallet.last_updated = datetime.utcnow()
         
         db.add(wallet_txn)
+        db.flush()
         db.commit()
         db.refresh(wallet)
         
-        logger.info(f"Wallet topup successful for user {user_id}: {amount} -> balance: {wallet.balance}")
+        logger.info(f"✅ Wallet topup successful for user {user_id}: ₹{amount_float} -> new balance: ₹{wallet.balance}")
+        
         return {
             "success": True,
             "message": "Wallet topped up successfully",
@@ -265,47 +271,60 @@ async def topup_wallet(
                 "user_id": wallet.user_id,
                 "balance": float(wallet.balance),
                 "transaction_id": reference_id,
-                "amount_added": float(amount),
+                "amount_added": amount_float,
                 "remark": remark,
                 "last_updated": wallet.last_updated.isoformat() if wallet.last_updated else None
             }
         }
 
-    except (InvalidOperation, ValueError) as e:
-        logger.error(f"Invalid decimal amount for topup: {amount}")
-        raise APIErrorResponse.validation_error(
-            message="Invalid amount format",
-            details={
-                "provided_amount": str(amount),
-                "error": "invalid_decimal_format",
-                "action": "provide_valid_decimal_amount"
-            },
-            field="amount"
-        )
+    except APIErrorResponse as e:
+        logger.error(f"API Error during wallet topup for user {user_id}: {e.detail}")
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     except SQLAlchemyError as e:
         db.rollback()
-        logger.error(f"Database error during wallet topup for user {user_id}: {str(e)}")
-        raise APIErrorResponse.database_error(
-            message="Failed to complete wallet topup",
-            details={
-                "error": "database_transaction_failed",
-                "user_id": user_id,
-                "amount": str(amount),
-                "action": "try_again_or_contact_support"
+        logger.error(f"Database error during wallet topup for user {user_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "database_error",
+                "message": "Failed to complete wallet topup",
+                "details": {
+                    "error": "database_transaction_failed",
+                    "user_id": user_id,
+                    "action": "try_again_or_contact_support"
+                }
+            }
+        )
+    except (InvalidOperation, ValueError, TypeError) as e:
+        logger.error(f"Invalid data type during wallet topup for user {user_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "validation_error",
+                "message": "Invalid amount format",
+                "details": {
+                    "provided_amount": str(data.amount),
+                    "error": "invalid_number_format",
+                    "action": "provide_valid_positive_number"
+                }
             }
         )
     except HTTPException:
-        # Re-raise APIErrorResponse exceptions
+        # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        logger.error(f"Unexpected error during wallet topup for user {user_id}: {str(e)}")
-        raise APIErrorResponse.database_error(
-            message="An unexpected error occurred during wallet topup",
-            details={
-                "error": "unexpected_topup_error",
-                "user_id": user_id,
-                "amount": str(amount),
-                "action": "contact_support"
+        db.rollback()
+        logger.error(f"Unexpected error during wallet topup for user {user_id}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "server_error",
+                "message": "An unexpected error occurred during wallet topup",
+                "details": {
+                    "error": "unexpected_error",
+                    "user_id": user_id,
+                    "action": "contact_support"
+                }
             }
         )
 
