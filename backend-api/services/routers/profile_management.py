@@ -12,7 +12,7 @@ from typing import List
 
 from database.database import get_db
 from services.auth.auth import get_current_user, get_password_hash, verify_password
-from services.models.models import User, Role, BankAccount
+from services.models.models import User, Role, BankAccount, OTPRequest as OTPRequestModel
 from services.models.user_models import UserProfile, KYCDocument, MPIN
 from config.constants import ROLE_HIERARCHY
 from utils.security import get_password_hash as hash_password
@@ -445,7 +445,18 @@ async def update_mpin(
         mpin_record.is_set = True
         mpin_record.updated_at = datetime.utcnow()
         mpin_record.failed_attempts = 0  # Reset failed attempts
+        mpin_record.locked_until = None  # Clear any lock
         
+        # Invalidate the OTP after successful PIN update (prevent reuse)
+        used_otp = db.query(OTPRequestModel).filter(
+            OTPRequestModel.user_id == current_user.id,
+            OTPRequestModel.purpose == "pin_change",
+            OTPRequestModel.is_verified == True,
+            OTPRequestModel.is_expired == False,
+        ).first()
+        if used_otp:
+            used_otp.is_expired = True
+
         logger.info(f"Committing MPIN changes to database")
         db.commit()
         logger.info(f"MPIN update committed successfully for user {current_user.id}")
@@ -454,7 +465,10 @@ async def update_mpin(
             "success": True,
             "message": "MPIN updated successfully"
         }
-        
+
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating MPIN for user {current_user.id}: {str(e)}")
@@ -707,6 +721,9 @@ class OTPVerification(BaseModel):
     otp_code: str = Field(..., min_length=6, max_length=6, description="6-digit OTP code")
     purpose: str = Field(..., description="Purpose of OTP verification")
 
+_OTP_RATE_LIMIT_COUNT = 3
+_OTP_RATE_LIMIT_WINDOW_MINUTES = 10
+
 @router.post("/otp/generate")
 async def generate_otp(
     request: OTPRequest,
@@ -715,6 +732,7 @@ async def generate_otp(
 ):
     """
     Generate and send OTP for various purposes (PIN change, profile update, etc.).
+    Rate limited to 3 requests per 10 minutes per user per purpose.
     """
     try:
         logger.info(f"Generating OTP for user {current_user.id}, purpose: {request.purpose}")
@@ -726,13 +744,34 @@ async def generate_otp(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid purpose. Must be one of: {', '.join(valid_purposes)}"
             )
+
+        # Rate limiting: max 3 OTP requests per 10 minutes per user per purpose
+        from datetime import timedelta as _td
+        window_start = datetime.utcnow() - _td(minutes=_OTP_RATE_LIMIT_WINDOW_MINUTES)
+        recent_count = (
+            db.query(OTPRequestModel)
+            .filter(
+                OTPRequestModel.user_id == current_user.id,
+                OTPRequestModel.purpose == request.purpose,
+                OTPRequestModel.created_at >= window_start,
+            )
+            .count()
+        )
+        if recent_count >= _OTP_RATE_LIMIT_COUNT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"Too many OTP requests. You may request at most {_OTP_RATE_LIMIT_COUNT} OTPs "
+                    f"every {_OTP_RATE_LIMIT_WINDOW_MINUTES} minutes. Please try again later."
+                ),
+            )
         
         # Generate OTP
         result = otp_service.create_otp_request(db, current_user.id, request.purpose)
         
         if not result["success"]:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=result["message"]
             )
         

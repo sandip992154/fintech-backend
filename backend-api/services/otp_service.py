@@ -26,7 +26,7 @@ class OTPService:
             self.email_service = None
         
         self.otp_length = 6
-        self.otp_expiry_minutes = 10
+        self.otp_expiry_minutes = 5  # OTP expires after 5 minutes
         
     def generate_otp(self) -> str:
         """Generate a random OTP of specified length."""
@@ -80,22 +80,28 @@ class OTPService:
                 is_verified=False,
                 is_expired=False,
                 attempts=0,
-                max_attempts=3
+                max_attempts=5  # Allow 5 wrong guesses before auto-invalidation
             )
             
             db.add(otp_request)
             db.commit()
+            db.refresh(otp_request)
             
-            # Send OTP via email
+            # Send OTP via email — rollback if sending fails
             email_sent = self._send_otp_email(user, otp_code, purpose)
             
             if not email_sent:
-                logger.warning(f"Failed to send OTP email to user {user_id}")
-                # Don't fail the request, as OTP is still created
+                logger.error(f"Failed to send OTP email to user {user_id}; rolling back OTP record")
+                db.delete(otp_request)
+                db.commit()
+                return {
+                    "success": False,
+                    "message": "Failed to send OTP email. Please check your email configuration or try again later."
+                }
             
             return {
                 "success": True,
-                "message": f"OTP sent to {user.email}",
+                "message": f"OTP sent successfully to {user.email}. It expires in {self.otp_expiry_minutes} minutes.",
                 "otp_id": otp_request.id,
                 "expires_at": expires_at.isoformat()
             }
