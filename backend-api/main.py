@@ -27,6 +27,7 @@ from services.routers.mpin_router import router as mpin_router
 from services.routers.user_management import router as user_management_router
 from services.routers.mpin_management import router as mpin_management_router
 from services.routers.profile_management import router as profile_management_router
+from services.routers.pin_reset_router import router as pin_reset_router
 from services.routers.member_services import router as member_router
 from services.routers.member_admin_routes import router as member_admin_router
 # Import unified member routes
@@ -223,6 +224,7 @@ app.include_router(mpin_router)
 app.include_router(user_management_router, prefix="/api/v1/user-management", tags=["User Management"])
 app.include_router(mpin_management_router, prefix="/api/v1/mpin", tags=["MPIN Management"])
 app.include_router(profile_management_router, prefix="/api/v1/profile", tags=["Profile Management"])
+app.include_router(pin_reset_router, prefix="/api/v1", tags=["PIN Management"])
 
 # Include unified member management router (replaces both core and admin routes)
 app.include_router(member_unified_router, tags=["Unified Member Management"])
