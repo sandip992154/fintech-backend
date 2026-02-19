@@ -66,6 +66,14 @@ class EmailService:
         Returns:
             bool: True if email was sent successfully, False otherwise
         """
+        if not self.is_configured:
+            logger.error(
+                "Email send aborted — SMTP is not configured. "
+                "Set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, "
+                "FROM_EMAIL in environment variables."
+            )
+            return False
+
         try:
             # Create message
             message = MIMEMultipart('alternative')
