@@ -105,19 +105,13 @@ def is_superadmin(user: User) -> bool:
     return user.role and user.role.name == "super_admin"
 
 def verify_security_pin(user: User, security_pin: str, db: Session) -> bool:
-    """Verify user's security pin (MPIN)"""
-    # For SuperAdmin users, allow profile updates without MPIN verification
-    if is_superadmin(user):
-        return True
-    
+    """Verify user's security PIN (MPIN) using bcrypt hash comparison."""
     mpin_record = db.query(MPIN).filter(MPIN.user_id == user.id).first()
     if not mpin_record or not mpin_record.is_set:
-        # If no MPIN is set, allow the operation (they can set it later)
+        # No PIN has been set yet — allow the operation
         return True
-    
-    # In production, this would use proper password hashing
-    # For now, we'll assume MPIN verification logic exists
-    return True  # Simplified for demo
+    # Verify the provided plain PIN against the stored bcrypt hash
+    return verify_password(security_pin, mpin_record.mpin_hash)
 
 # ========== PROFILE DETAILS API ==========
 
@@ -191,13 +185,24 @@ async def update_profile_details(
 ):
     """Update user's profile details"""
     try:
-        # Verify security pin if provided (required for sensitive updates)
-        if profile_data.securityPin:
+        # PIN enforcement: require PIN if user has one set
+        mpin_record = db.query(MPIN).filter(MPIN.user_id == current_user.id).first()
+        user_has_pin = mpin_record is not None and mpin_record.is_set
+
+        if user_has_pin:
+            if not profile_data.securityPin:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Security PIN is required to update profile details"
+                )
             if not verify_security_pin(current_user, profile_data.securityPin, db):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid security PIN"
                 )
+        elif profile_data.securityPin:
+            # PIN provided but none is set yet — still validate it doesn't fail
+            pass
         # Update User table
         update_fields = {}
         if profile_data.name:

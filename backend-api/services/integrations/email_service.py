@@ -1,11 +1,10 @@
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 import smtplib
 from typing import Optional, Dict, Any
 import logging
 import os
-from pathlib import Path
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +14,10 @@ class EmailService:
         self.smtp_port = int(os.getenv("SMTP_PORT", 587))
         self.smtp_username = os.getenv("SMTP_USERNAME")
         self.smtp_password = os.getenv("SMTP_PASSWORD")
+        self.from_name = os.getenv("FROM_NAME", "BandruPay")
         self.sender_email = os.getenv("FROM_EMAIL", self.smtp_username)
+        # Formatted sender: "BandruPay <email@example.com>"
+        self.sender_formatted = formataddr((self.from_name, self.sender_email))
         self.signup_link_base = "https://customer.bandarupay.pro/signin"
         self.is_configured = all([
             self.smtp_host,
@@ -24,26 +26,14 @@ class EmailService:
             self.smtp_password,
             self.sender_email
         ])
-        
-        # Log configuration status
+
         if not self.is_configured:
-            logger.error("Email service not properly configured. Missing SMTP credentials in environment variables.")
+            logger.error(
+                "Email service not properly configured. "
+                "Set SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, FROM_EMAIL in environment variables."
+            )
         else:
-            logger.info(f"Email service configured for {self.sender_email}")
-        
-        # Set up template environment (optional)
-        try:
-            template_dir = Path(__file__).parent.parent / "templates" / "email"
-            if template_dir.exists():
-                self.template_env = Environment(
-                    loader=FileSystemLoader(str(template_dir)),
-                    autoescape=select_autoescape(['html', 'xml'])
-                )
-            else:
-                self.template_env = None
-        except Exception as e:
-            logger.warning(f"Template environment setup failed: {e}")
-            self.template_env = None
+            logger.info(f"Email service configured — sending as: {self.sender_formatted}")
 
     def send_email(
         self,
@@ -54,17 +44,17 @@ class EmailService:
         bcc: Optional[list] = None
     ) -> bool:
         """
-        Send an email
-        
+        Send an HTML email via SMTP.
+
         Args:
             to_email: Recipient email address
             subject: Email subject
-            content: Email content (HTML)
-            cc: List of CC recipients
-            bcc: List of BCC recipients
-            
+            content: Email body (HTML)
+            cc: Optional list of CC recipients
+            bcc: Optional list of BCC recipients
+
         Returns:
-            bool: True if email was sent successfully, False otherwise
+            True if sent successfully, False otherwise
         """
         if not self.is_configured:
             logger.error(
@@ -75,82 +65,35 @@ class EmailService:
             return False
 
         try:
-            # Create message
             message = MIMEMultipart('alternative')
             message['Subject'] = subject
-            message['From'] = self.sender_email
+            message['From'] = self.sender_formatted
             message['To'] = to_email
-            
+
             if cc:
                 message['Cc'] = ', '.join(cc)
             if bcc:
                 message['Bcc'] = ', '.join(bcc)
 
-            # Attach HTML content
-            html_part = MIMEText(content, 'html')
-            message.attach(html_part)
+            message.attach(MIMEText(content, 'html'))
 
-            # Create SMTP connection
             with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
                 server.starttls()
                 server.login(self.smtp_username, self.smtp_password)
-                
+
                 recipients = [to_email]
                 if cc:
                     recipients.extend(cc)
                 if bcc:
                     recipients.extend(bcc)
-                
-                server.sendmail(
-                    self.sender_email,
-                    recipients,
-                    message.as_string()
-                )
 
-            logger.info(f"Email sent successfully to {to_email}")
+                server.sendmail(self.sender_email, recipients, message.as_string())
+
+            logger.info(f"Email sent successfully to {to_email} | Subject: {subject}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to send email: {str(e)}")
-            return False
-
-            # Create message
-            message = MIMEMultipart('alternative')
-            message['Subject'] = subject
-            message['From'] = self.sender_email
-            message['To'] = to_email
-            
-            if cc:
-                message['Cc'] = ', '.join(cc)
-            if bcc:
-                message['Bcc'] = ', '.join(bcc)
-
-            # Attach HTML content
-            html_part = MIMEText(html_content, 'html')
-            message.attach(html_part)
-
-            # Create SMTP connection
-            with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.smtp_username, self.smtp_password)
-                
-                recipients = [to_email]
-                if cc:
-                    recipients.extend(cc)
-                if bcc:
-                    recipients.extend(bcc)
-                
-                server.sendmail(
-                    self.sender_email,
-                    recipients,
-                    message.as_string()
-                )
-
-            logger.info(f"Email sent successfully to {to_email}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to send email: {str(e)}")
+            logger.error(f"Failed to send email to {to_email}: {str(e)}")
             return False
 
     def send_otp_email(self, to_email: str, otp: str, user_name: str) -> bool:

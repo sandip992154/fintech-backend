@@ -9,11 +9,8 @@ Endpoints:
 
 import random
 import logging
-import smtplib
 import os
 from datetime import datetime, timedelta
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from passlib.context import CryptContext
@@ -30,6 +27,7 @@ from services.schemas.pin_reset_schemas import (
     ResetPinRequest,
     ResetPinResponse,
 )
+from services.integrations.email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -59,50 +57,45 @@ def _hash_pin(plain_pin: str) -> str:
 
 def _send_pin_reset_otp_email(email: str, name: str, otp: str) -> bool:
     """
-    Send the PIN-reset OTP e-mail via SMTP.
-    Reads credentials from environment variables:
-        SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, FROM_EMAIL
-    Returns True on success, False on failure (failure is logged but not raised
-    so the caller can surface a clean HTTP error).
+    Send the PIN-reset OTP via the shared EmailService (HTML email).
     """
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_username = os.getenv("SMTP_USERNAME")
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    from_email = os.getenv("FROM_EMAIL", smtp_username)
+    html_body = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <div style="background: #f8f9fa; padding: 30px; border-radius: 10px;">
+            <h2 style="color: #333; text-align: center; margin-bottom: 4px;">BandruPay</h2>
+            <p style="text-align:center; color:#666; margin-top:0;">Secure PIN Reset</p>
+            <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
 
-    if not smtp_username or not smtp_password:
-        logger.error("SMTP credentials not configured (SMTP_USERNAME / SMTP_PASSWORD).")
-        return False
+            <p>Dear <strong>{name}</strong>,</p>
+            <p>You requested to reset your secure PIN. Use the OTP below:</p>
 
-    subject = "Your PIN Reset OTP – Bandaru Pay"
-    body = (
-        f"Dear {name},\n\n"
-        f"You requested to reset your secure PIN on Bandaru Pay.\n\n"
-        f"Your One-Time Password (OTP) is:  {otp}\n\n"
-        f"This OTP is valid for {_OTP_EXPIRY_MINUTES} minutes only.\n"
-        f"Please do not share this code with anyone.\n\n"
-        f"If you did not request a PIN reset, please contact support immediately.\n\n"
-        f"Best regards,\n"
-        f"Bandaru Pay Security Team"
-    )
+            <div style="background:#4f46e5; color:#fff; padding:20px; border-radius:8px;
+                        text-align:center; margin:24px 0; letter-spacing:8px;">
+                <span style="font-size:36px; font-weight:bold;">{otp}</span>
+            </div>
 
+            <ul style="color:#555; font-size:14px;">
+                <li>Valid for <strong>{_OTP_EXPIRY_MINUTES} minutes</strong> only</li>
+                <li>Do <strong>not</strong> share this code with anyone</li>
+                <li>If you did not request this, contact support immediately</li>
+            </ul>
+
+            <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+            <p style="color:#999; font-size:12px; text-align:center;">
+                This is an automated message &mdash; please do not reply.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
     try:
-        msg = MIMEMultipart()
-        msg["From"] = from_email
-        msg["To"] = email
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
-
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(smtp_username, smtp_password)
-            server.send_message(msg)
-
-        logger.info("PIN reset OTP sent to %s", email)
-        return True
-
+        svc = EmailService()
+        return svc.send_email(
+            to_email=email,
+            subject="Your PIN Reset OTP – BandruPay",
+            content=html_body,
+        )
     except Exception as exc:
         logger.error("Failed to send PIN reset OTP to %s: %s", email, exc)
         return False
@@ -343,6 +336,14 @@ def reset_pin(
         .filter(MPIN.user_id == current_user.id)
         .first()
     )
+
+    # ── reject if new PIN is the same as the current PIN ─────────────────────
+    if mpin_record and mpin_record.is_set:
+        if _pwd_ctx.verify(payload.new_pin, mpin_record.mpin_hash):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New PIN must be different from your current PIN.",
+            )
 
     if mpin_record:
         mpin_record.mpin_hash = hashed_pin
