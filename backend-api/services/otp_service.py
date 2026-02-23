@@ -3,8 +3,11 @@ OTP (One-Time Password) Service for PIN management verification.
 Handles OTP generation, storage, validation, and cleanup.
 """
 
-import random
-import string
+# BUG FIX: replaced insecure `random` with `secrets` for cryptographic OTP generation
+import secrets
+import hmac
+import hashlib
+import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -14,6 +17,30 @@ from services.integrations.email_service import EmailService
 import logging
 
 logger = logging.getLogger(__name__)
+
+# ── OTP HMAC helpers ──────────────────────────────────────────────────────────
+# IMPORTANT: Set OTP_HASH_SECRET in environment variables before deploying.
+# A missing secret falls back to a hardcoded value which MUST be changed.
+_OTP_HMAC_KEY: bytes = os.getenv(
+    "OTP_HASH_SECRET", "bandrupay-otp-secret-CHANGE-IN-PRODUCTION"
+).encode("utf-8")
+
+
+def _hash_otp(plain_otp: str) -> str:
+    """
+    Hash a plain-text OTP with HMAC-SHA256.
+    Stored in DB so the raw OTP is never at rest in plain form.
+    Even if the database is dumped, OTPs cannot be reversed without the key.
+    """
+    return hmac.new(_OTP_HMAC_KEY, plain_otp.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _verify_otp_hash(plain_otp: str, stored_hash: str) -> bool:
+    """
+    Constant-time comparison prevents timing-attack enumeration.
+    Always call this instead of plain == comparison.
+    """
+    return hmac.compare_digest(_hash_otp(plain_otp), stored_hash)
 
 class OTPService:
     """Service for managing OTP generation and verification for PIN changes."""
@@ -29,8 +56,9 @@ class OTPService:
         self.otp_expiry_minutes = 5  # OTP expires after 5 minutes
         
     def generate_otp(self) -> str:
-        """Generate a random OTP of specified length."""
-        return ''.join(random.choices(string.digits, k=self.otp_length))
+        # BUG FIX: was random.choices (not crypto-safe). secrets.choice is
+        # cryptographically random and suitable for security codes.
+        return ''.join(secrets.choice('0123456789') for _ in range(self.otp_length))
     
     def create_otp_request(
         self, 
@@ -66,21 +94,25 @@ class OTPService:
             for otp in existing_otps:
                 otp.is_expired = True
             
-            # Generate new OTP
+            # Generate new OTP (plain only used for email; DB stores the hash)
             otp_code = self.generate_otp()
             expires_at = datetime.utcnow() + timedelta(minutes=self.otp_expiry_minutes)
-            
+
+            # BUG FIX: store HMAC hash of OTP, never the plain value.
+            # Requires otp_requests.otp_code column to be VARCHAR(64) — see migration note.
+            otp_hash = _hash_otp(otp_code)
+
             # Create OTP request record
             otp_request = OTPRequest(
                 user_id=user_id,
-                otp_code=otp_code,
+                otp_code=otp_hash,          # stored as hash, not plaintext
                 purpose=purpose,
                 expires_at=expires_at,
                 created_at=datetime.utcnow(),
                 is_verified=False,
                 is_expired=False,
                 attempts=0,
-                max_attempts=5  # Allow 5 wrong guesses before auto-invalidation
+                max_attempts=3  # BUG FIX: was 5; requirement is max 3 attempts
             )
             
             db.add(otp_request)
@@ -88,6 +120,7 @@ class OTPService:
             db.refresh(otp_request)
             
             # Send OTP via email — rollback if sending fails
+            # otp_code (plain) is passed to email; otp_hash is already in the DB
             email_sent = self._send_otp_email(user, otp_code, purpose)
             
             if not email_sent:
@@ -143,25 +176,37 @@ class OTPService:
             if not otp_request:
                 return {"success": False, "message": "No valid OTP found or OTP expired"}
             
-            # Check attempt limit
+            # Check attempt limit before doing any comparison
             if otp_request.attempts >= otp_request.max_attempts:
                 otp_request.is_expired = True
                 db.commit()
-                return {"success": False, "message": "Maximum OTP attempts exceeded"}
-            
-            # Increment attempt count
-            otp_request.attempts += 1
-            
-            # Verify OTP code
-            if otp_request.otp_code != otp_code:
+                # Generic message: don't reveal why it failed
+                return {"success": False, "message": "OTP is no longer valid. Please request a new one."}
+
+            # BUG FIX: was incrementing attempts BEFORE checking the code.
+            # This pre-consumed an attempt even on a correct entry.
+            # Now we only increment on a wrong guess (correct entry leaves counter unchanged).
+            if not _verify_otp_hash(otp_code, otp_request.otp_code):
+                otp_request.attempts += 1
+                remaining = otp_request.max_attempts - otp_request.attempts
+                if otp_request.attempts >= otp_request.max_attempts:
+                    otp_request.is_expired = True
                 db.commit()
-                return {"success": False, "message": "Invalid OTP code"}
-            
-            # Mark OTP as verified
+                # Generic message for security; remaining hint is acceptable UX
+                return {
+                    "success": False,
+                    "message": (
+                        "Invalid OTP."
+                        if remaining <= 0
+                        else f"Invalid OTP. {remaining} attempt(s) remaining."
+                    ),
+                }
+
+            # Correct OTP — mark as verified; do NOT increment attempts
             otp_request.is_verified = True
             otp_request.verified_at = datetime.utcnow()
             db.commit()
-            
+
             return {"success": True, "message": "OTP verified successfully"}
             
         except Exception as e:
@@ -212,8 +257,9 @@ class OTPService:
             logger.error("EmailService not available")
             return False
             
-        logger.info(f"Attempting to send OTP email to {user.email} for purpose: {purpose}")
-        logger.info(f"OTP code being sent: {otp_code}")
+# BUG FIX: removed the line that logged the raw OTP code.
+            # Logging sensitive credentials creates audit-trail exposure risk.
+            logger.info("Sending OTP email to %s for purpose: %s", user.email, purpose)
             
         try:
             subject = "Your BANDARU PAY Security Code"

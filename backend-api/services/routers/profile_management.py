@@ -78,12 +78,16 @@ class PasswordManagerUpdate(BaseModel):
         return v
 
 class PinManagerUpdate(BaseModel):
-    """Schema for MPIN Manager tab"""
-    new_pin: str = Field(..., pattern=r"^\d{4}$")
-    confirm_pin: str = Field(..., pattern=r"^\d{4}$")
+    """
+    Schema for MPIN Manager tab.
+    BUG FIX: new_pin/confirm_pin were pattern=r"^\d{4}$" (only 4 digits).
+    Requirements state PIN must be 4–6 digits numeric.
+    """
+    new_pin: str = Field(..., pattern=r"^\d{4,6}$")
+    confirm_pin: str = Field(..., pattern=r"^\d{4,6}$")
     otp: str = Field(..., pattern=r"^\d{6}$")
-    
-    @validator('confirm_pin')  
+
+    @validator('confirm_pin')
     def pins_match(cls, v, values):
         if 'new_pin' in values and v != values['new_pin']:
             raise ValueError('PINs do not match')
@@ -422,14 +426,30 @@ async def update_mpin(
             "pin_change"
         )
         
+        # BUG FIX: expose only a generic error to avoid leaking internal OTP state.
+        # Previously: detail=otp_verification["message"] — could reveal system internals.
         if not otp_verification["success"]:
-            logger.error(f"OTP verification failed for user {current_user.id}: {otp_verification['message']}")
+            logger.warning("OTP verification failed for user %s (reason hidden from client)", current_user.id)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=otp_verification["message"]
+                detail="OTP verification failed. Please request a new OTP and try again."
             )
-        
-        logger.info(f"OTP verified successfully for user {current_user.id}")
+
+        logger.info("OTP verified successfully for user %s", current_user.id)
+
+        # Get or create MPIN record
+        mpin_record = db.query(MPIN).filter(MPIN.user_id == current_user.id).first()
+
+        # BUG FIX: prevent setting the same PIN again.
+        # Without this check the user could "reset" to the identical PIN.
+        if mpin_record and mpin_record.is_set:
+            from passlib.context import CryptContext as _CryptContext  # local import to avoid circular
+            from services.auth.auth import verify_password as _verify_pw
+            if _verify_pw(mpin_data.new_pin, mpin_record.mpin_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="New PIN must be different from your current PIN."
+                )
         
         # Get or create MPIN record
         mpin_record = db.query(MPIN).filter(MPIN.user_id == current_user.id).first()

@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 from passlib.context import CryptContext
 import secrets
 import string
+import logging
+
+logger = logging.getLogger(__name__)
 
 from database.database import get_db
 from services.auth.auth import get_current_user
@@ -226,6 +229,13 @@ async def change_mpin(
             detail=f"Invalid old MPIN. {remaining_attempts} attempts remaining."
         )
     
+    # BUG FIX: no same-PIN check — user could "change" to the identical PIN.
+    if verify_mpin(change_data.new_mpin, mpin.mpin_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="New PIN must be different from your current PIN."
+        )
+
     # Update with new MPIN
     mpin.mpin_hash = hash_mpin(change_data.new_mpin)
     mpin.failed_attempts = 0
@@ -249,14 +259,32 @@ async def generate_mpin_reset_otp(
     """Generate OTP for MPIN reset"""
     if otp_request.purpose != "mpin_reset":
         raise HTTPException(status_code=400, detail="Invalid OTP purpose")
-    
+
     # Check if user has MPIN set
     mpin = db.query(MPIN).filter(
         MPIN.user_code == current_user.user_code
     ).first()
-    
+
     if not mpin or not mpin.is_set:
         raise HTTPException(status_code=400, detail="MPIN is not set")
+
+    # BUG FIX: no rate limiting existed — attackers could spam OTP requests.
+    # Allow at most 3 OTP requests per 10-minute rolling window per user.
+    _rate_window = datetime.utcnow() - timedelta(minutes=10)
+    recent_otp_count = (
+        db.query(OTP)
+        .filter(
+            OTP.user_code == current_user.user_code,
+            OTP.purpose == "mpin_reset",
+            OTP.created_at >= _rate_window,
+        )
+        .count()
+    )
+    if recent_otp_count >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many OTP requests. Please wait 10 minutes before requesting again.",
+        )
     
     # Generate OTP
     otp_code = generate_otp()
@@ -275,13 +303,12 @@ async def generate_mpin_reset_otp(
     db.add(otp_record)
     db.commit()
     
-    # Send OTP via SMS and Email
+    # BUG FIX: OTP email was sent TWICE (duplicate bug).
+    # One call removed. Also replaced bare `print` with logger.
     try:
         send_otp_email(current_user.email, otp_code, current_user.full_name)
-        send_otp_email(current_user.email, otp_code, current_user.full_name)
     except Exception as e:
-        # Log error but don't fail the request
-        print(f"Failed to send OTP: {str(e)}")
+        logger.error("Failed to send MPIN reset OTP to %s: %s", current_user.email, e)
     
     return OTPResponse(
         message="OTP sent successfully",

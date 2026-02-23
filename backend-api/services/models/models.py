@@ -189,7 +189,11 @@ class OTPRequest(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    otp_code = Column(String(10), nullable=False)
+    # MIGRATION REQUIRED: column widened from String(10) to String(64) to store
+    # HMAC-SHA256 hashes (64 hex chars) instead of plaintext OTP codes.
+    # Run: ALTER TABLE otp_requests ALTER COLUMN otp_code TYPE VARCHAR(64);
+    # (PostgreSQL) or let SQLite handle implicitly.
+    otp_code = Column(String(64), nullable=False)
     purpose = Column(String(50), nullable=False)  # pin_change, pin_setup, profile_update, etc.
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

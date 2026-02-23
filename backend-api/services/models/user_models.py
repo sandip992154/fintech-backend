@@ -155,8 +155,9 @@ class OTP(Base):
     phone = Column(String(15))
     email = Column(String(100))
     
-    # OTP Details
-    otp_code = Column(String(6), nullable=False)
+    # MIGRATION REQUIRED: column widened from String(6) to String(64) to store
+    # HMAC-SHA256 hashes. Run: ALTER TABLE otp_records ALTER COLUMN otp_code TYPE VARCHAR(64);
+    otp_code = Column(String(64), nullable=False)
     purpose = Column(String(50), nullable=False)  # 'mpin_setup', 'kyc_verification', 'login'
     
     # Status and Expiry

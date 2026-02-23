@@ -7,7 +7,11 @@ Endpoints:
   POST /api/v1/pin/reset       — set the new 4-digit PIN after OTP is verified
 """
 
-import random
+# BUG FIX: replaced `import random` with `secrets` for cryptographically
+# random OTP generation. Also added hmac/hashlib for OTP hashing.
+import secrets
+import hmac
+import hashlib
 import logging
 import os
 from datetime import datetime, timedelta
@@ -41,14 +45,41 @@ _OTP_PURPOSE = "pin_reset"
 _OTP_EXPIRY_MINUTES = 5
 _OTP_RATE_LIMIT_COUNT = 3        # max OTP requests …
 _OTP_RATE_LIMIT_WINDOW_MINUTES = 10  # … per this many minutes
-_MAX_VERIFY_ATTEMPTS = 5         # brute-force guard per OTP record
+# BUG FIX: was 5; requirement specifies max 3 attempts before lockout
+_MAX_VERIFY_ATTEMPTS = 3
+
+
+# ── OTP HMAC helpers ────────────────────────────────────────────────────────────
+# IMPORTANT: set OTP_HASH_SECRET in environment variables before deploying.
+_OTP_HMAC_KEY: bytes = os.getenv(
+    "OTP_HASH_SECRET", "bandrupay-otp-secret-CHANGE-IN-PRODUCTION"
+).encode("utf-8")
+
+
+def _hash_otp(plain_otp: str) -> str:
+    """
+    Hash a plain-text OTP with HMAC-SHA256 and a server secret.
+    Stored in the DB so the raw OTP is never at rest in plain form.
+    Even a full DB dump cannot reverse OTPs without the server key.
+    Requires otp_requests.otp_code to be VARCHAR(64) — run the migration script.
+    """
+    return hmac.new(_OTP_HMAC_KEY, plain_otp.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _verify_otp_hash(plain_otp: str, stored_hash: str) -> bool:
+    """
+    Constant-time comparison via hmac.compare_digest.
+    Prevents timing-attack enumeration of valid OTP values.
+    """
+    return hmac.compare_digest(_hash_otp(plain_otp), stored_hash)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _generate_otp() -> str:
-    """Return a cryptographically random 6-digit string."""
-    return f"{random.SystemRandom().randint(0, 999999):06d}"
+    # BUG FIX: was random.SystemRandom().randint — while technically
+    # using OS entropy, the idiomatic and future-proof way is secrets.randbelow.
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 
 def _hash_pin(plain_pin: str) -> str:
@@ -154,13 +185,14 @@ def send_pin_otp(
         .update({"is_expired": True})
     )
 
-    # ── generate and persist the new OTP ─────────────────────────────────────
+    # Generate OTP plaintext (for email) then hash it for DB storage.
     otp_code = _generate_otp()
+    otp_hash = _hash_otp(otp_code)     # BUG FIX: DB stores hash, NOT the plain OTP
     expires_at = datetime.utcnow() + timedelta(minutes=_OTP_EXPIRY_MINUTES)
 
     otp_record = OTPRequest(
         user_id=current_user.id,
-        otp_code=otp_code,
+        otp_code=otp_hash,          # stored as HMAC-SHA256 hash
         purpose=_OTP_PURPOSE,
         expires_at=expires_at,
         created_at=datetime.utcnow(),
@@ -173,11 +205,11 @@ def send_pin_otp(
     db.commit()
     db.refresh(otp_record)
 
-    # ── send the e-mail ───────────────────────────────────────────────────────
+    # ── send the e-mail (with the PLAIN otp_code, not the hash) ─────────────────
     sent = _send_pin_reset_otp_email(
         email=current_user.email,
         name=current_user.full_name,
-        otp=otp_code,
+        otp=otp_code,   # plain OTP is only ever sent via email, never stored
     )
     if not sent:
         # Roll back the OTP record so the user can try again
@@ -252,17 +284,27 @@ def verify_pin_otp(
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many incorrect attempts. This OTP has been invalidated. Please request a new one.",
+            # Generic message: don't reveal the lockout threshold
+            detail="OTP is no longer valid. Please request a new one.",
         )
 
-    # Validate the code
-    if otp_record.otp_code != payload.otp:
+    # BUG FIX: was comparing plain-text strings (no hashing, timing-attack risk).
+    # Now uses _verify_otp_hash which:
+    #   (a) hashes the submitted value before comparing,
+    #   (b) uses hmac.compare_digest for constant-time equality.
+    if not _verify_otp_hash(payload.otp, otp_record.otp_code):
         otp_record.attempts += 1
         remaining = otp_record.max_attempts - otp_record.attempts
+        if otp_record.attempts >= otp_record.max_attempts:
+            otp_record.is_expired = True
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid OTP. {remaining} attempt(s) remaining.",
+            detail=(
+                "OTP is no longer valid. Please request a new one."
+                if remaining <= 0
+                else f"Invalid OTP. {remaining} attempt(s) remaining."
+            ),
         )
 
     # ── success: mark as verified ─────────────────────────────────────────────

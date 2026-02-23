@@ -30,9 +30,13 @@ class VerifyPinOTPResponse(BaseModel):
 
 
 class ResetPinRequest(BaseModel):
-    """Request schema for POST /reset-pin"""
-    new_pin: str = Field(..., min_length=4, max_length=4, description="New 4-digit numeric PIN")
-    confirm_pin: str = Field(..., min_length=4, max_length=4, description="Confirmation of new PIN")
+    """
+    Request schema for POST /reset-pin.
+    BUG FIX: was min_length=4, max_length=4 (only 4 digits).
+    Requirements state PIN must be 4–6 digits, so max_length raised to 6.
+    """
+    new_pin: str = Field(..., min_length=4, max_length=6, description="New 4–6 digit numeric PIN")
+    confirm_pin: str = Field(..., min_length=4, max_length=6, description="Confirmation of new PIN")
 
     @validator("new_pin")
     def pin_must_be_numeric(cls, v: str) -> str:
