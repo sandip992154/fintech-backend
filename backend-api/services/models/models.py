@@ -75,6 +75,10 @@ class User(Base):
     company_pan_card = Column(String(10), nullable=True)  # Company PAN Card for business roles
     parent_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Parent user in hierarchy
     
+    # Certificate Manager fields
+    cmo = Column(String(200), nullable=True)  # CMO certificate
+    coo = Column(String(200), nullable=True)  # COO certificate
+    
     # Role relationship
     role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
     

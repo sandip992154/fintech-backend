@@ -52,6 +52,7 @@ class KYCDocument(Base):
     business_type = Column(String(100))
     business_address = Column(Text)
     company_pan_number = Column(String(10))
+    gst_number = Column(String(15), nullable=True)  # GST Number (15 alphanumeric)
     
     # Bank Details
     bank_name = Column(String(255))

@@ -67,9 +67,24 @@ class ProfileDetailsUpdate(BaseModel):
 class PasswordManagerUpdate(BaseModel):
     """Schema for Password Manager tab"""
     current_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=6)
-    confirm_password: str = Field(..., min_length=6)
-    security_pin: str = Field(..., pattern=r"^\d{4}$")
+    new_password: str = Field(..., min_length=8)
+    confirm_password: str = Field(..., min_length=8)
+    security_pin: str = Field(..., pattern=r"^\d{4,6}$")
+    
+    @validator('new_password')
+    def password_strength(cls, v):
+        import re
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+            raise ValueError('Password must contain at least one special character')
+        return v
     
     @validator('confirm_password')
     def passwords_match(cls, v, values):
@@ -100,7 +115,31 @@ class BankDetailsUpdate(BaseModel):
     ifsc_code: Optional[str] = Field(None, pattern=r"^[A-Z]{4}0[A-Z0-9]{6}$")
     account_holder_name: Optional[str] = Field(None, min_length=2, max_length=100)
     branch_name: Optional[str] = Field(None, min_length=2, max_length=100)
-    security_pin: str = Field(..., pattern=r"^\d{4}$")
+    security_pin: str = Field(..., pattern=r"^\d{4,6}$")
+
+class KYCDetailsUpdate(BaseModel):
+    """Schema for KYC Details tab"""
+    shop_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    gst_number: Optional[str] = Field(None, pattern=r"^[0-9A-Z]{15}$")
+    aadhar_number: Optional[str] = Field(None, pattern=r"^\d{12}$")
+    pan_number: Optional[str] = Field(None, pattern=r"^[A-Z]{5}[0-9]{4}[A-Z]{1}$")
+    security_pin: str = Field(..., pattern=r"^\d{4,6}$")
+
+class CertificateManagerUpdate(BaseModel):
+    """Schema for Certificate Manager tab"""
+    cmo: Optional[str] = Field(None, min_length=1, max_length=200)
+    coo: Optional[str] = Field(None, min_length=1, max_length=200)
+    security_pin: str = Field(..., pattern=r"^\d{4,6}$")
+
+class RoleManagerUpdate(BaseModel):
+    """Schema for Role Manager tab"""
+    member_role: str = Field(..., min_length=1, max_length=100)
+    security_pin: str = Field(..., pattern=r"^\d{4,6}$")
+
+class MappingManagerUpdate(BaseModel):
+    """Schema for Mapping Manager tab"""
+    parent_member: str = Field(..., min_length=1, max_length=200)
+    security_pin: str = Field(..., pattern=r"^\d{4,6}$")
 
 # ========== UTILITY FUNCTIONS ==========
 
@@ -564,13 +603,12 @@ async def update_bank_details(
 ):
     """Update user's bank details"""
     try:
-        # Verify security PIN (skip for superadmin if not set)
-        if not is_superadmin(current_user) or bank_data.security_pin:
-            if not verify_security_pin(current_user, bank_data.security_pin, db):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid security PIN"
-                )
+        # Verify security PIN (MPIN) - required for all users
+        if not verify_security_pin(current_user, bank_data.security_pin, db):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid security PIN"
+            )
         
         if is_superadmin(current_user):
             # For superadmin, use BankAccount table
@@ -636,55 +674,213 @@ async def update_bank_details(
             detail="Failed to update bank details"
         )
 
-# ========== DISABLED SECTIONS FOR NON-SUPERADMIN ==========
+# ========== KYC DETAILS MANAGEMENT ==========
 
 @router.get("/kyc-details")
 async def get_kyc_details(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get KYC details (disabled for superadmin)"""
-    if is_superadmin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="KYC section is disabled for superadmin"
-        )
-    
-    # For other users, redirect to existing KYC API
-    return {"message": "Use /api/kyc/details endpoint for KYC information"}
+    """Get KYC details for the current user"""
+    try:
+        kyc = db.query(KYCDocument).filter(KYCDocument.user_id == current_user.id).first()
+        return {
+            "success": True,
+            "data": {
+                "shop_name": current_user.shop_name or '',
+                "gst_number": (kyc.gst_number if kyc else '') or '',
+                "aadhar_number": (kyc.aadhar_card_no if kyc else '') or current_user.aadhaar_card_number or '',
+                "pan_number": (kyc.pan_card_no if kyc else '') or current_user.pan_card_number or '',
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error fetching KYC details: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch KYC details")
+
+@router.put("/kyc-details")
+async def update_kyc_details(
+    kyc_data: KYCDetailsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update KYC details — requires MPIN verification"""
+    try:
+        # Verify MPIN
+        if not verify_security_pin(current_user, kyc_data.security_pin, db):
+            raise HTTPException(status_code=400, detail="Invalid security PIN (MPIN)")
+        
+        kyc = db.query(KYCDocument).filter(KYCDocument.user_id == current_user.id).first()
+        if not kyc:
+            kyc = KYCDocument(
+                user_id=current_user.id,
+                pan_card_no=kyc_data.pan_number or "",
+                aadhar_card_no=kyc_data.aadhar_number or ""
+            )
+            db.add(kyc)
+        
+        # Update User model fields
+        if kyc_data.shop_name is not None:
+            current_user.shop_name = kyc_data.shop_name
+        if kyc_data.pan_number is not None:
+            current_user.pan_card_number = kyc_data.pan_number
+            kyc.pan_card_no = kyc_data.pan_number
+        if kyc_data.aadhar_number is not None:
+            current_user.aadhaar_card_number = kyc_data.aadhar_number
+            kyc.aadhar_card_no = kyc_data.aadhar_number
+        
+        # Update KYCDocument fields
+        if kyc_data.gst_number is not None:
+            kyc.gst_number = kyc_data.gst_number
+        
+        current_user.updated_at = datetime.utcnow()
+        db.commit()
+        return {"success": True, "message": "KYC details updated successfully"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating KYC details: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update KYC details")
+
+# ========== CERTIFICATE MANAGER ==========
 
 @router.get("/certificate-manager")
-async def get_certificate_manager(current_user: User = Depends(get_current_user)):
-    """Certificate Manager (disabled for superadmin)"""
-    if is_superadmin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Certificate Manager is disabled for superadmin"
-        )
-    
-    return {"message": "Certificate Manager functionality not yet implemented"}
+async def get_certificate_manager(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get certificate manager details"""
+    return {
+        "success": True,
+        "data": {
+            "cmo": getattr(current_user, 'cmo', '') or '',
+            "coo": getattr(current_user, 'coo', '') or '',
+        }
+    }
+
+@router.put("/certificate-manager")
+async def update_certificate_manager(
+    cert_data: CertificateManagerUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update certificate manager — requires MPIN verification"""
+    try:
+        if not verify_security_pin(current_user, cert_data.security_pin, db):
+            raise HTTPException(status_code=400, detail="Invalid security PIN (MPIN)")
+        
+        if cert_data.cmo is not None:
+            current_user.cmo = cert_data.cmo
+        if cert_data.coo is not None:
+            current_user.coo = cert_data.coo
+        current_user.updated_at = datetime.utcnow()
+        db.commit()
+        return {"success": True, "message": "Certificate details updated successfully"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating certificate details: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update certificate details")
+
+# ========== ROLE MANAGER ==========
 
 @router.get("/role-manager")
-async def get_role_manager(current_user: User = Depends(get_current_user)):
-    """Role Manager (disabled for superadmin)"""
-    if is_superadmin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Role Manager is disabled for superadmin"
-        )
-    
-    return {"message": "Role Manager functionality not yet implemented"}
+async def get_role_manager(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get role manager details"""
+    return {
+        "success": True,
+        "data": {
+            "member_role": current_user.role.name if current_user.role else '',
+        }
+    }
+
+@router.put("/role-manager")
+async def update_role_manager(
+    role_data: RoleManagerUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update role — requires MPIN verification"""
+    try:
+        if not verify_security_pin(current_user, role_data.security_pin, db):
+            raise HTTPException(status_code=400, detail="Invalid security PIN (MPIN)")
+        
+        # Find the requested role
+        role = db.query(Role).filter(Role.name == role_data.member_role).first()
+        if not role:
+            raise HTTPException(status_code=400, detail=f"Role '{role_data.member_role}' not found")
+        
+        current_user.role_id = role.id
+        current_user.updated_at = datetime.utcnow()
+        db.commit()
+        return {"success": True, "message": "Role updated successfully"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating role: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update role")
+
+# ========== MAPPING MANAGER ==========
 
 @router.get("/mapping-manager")
-async def get_mapping_manager(current_user: User = Depends(get_current_user)):
-    """Mapping Manager (disabled for superadmin)"""
-    if is_superadmin(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Mapping Manager is disabled for superadmin"
-        )
-    
-    return {"message": "Mapping Manager functionality not yet implemented"}
+async def get_mapping_manager(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get mapping manager details"""
+    parent = None
+    if current_user.parent_id:
+        parent_user = db.query(User).filter(User.id == current_user.parent_id).first()
+        if parent_user:
+            parent = f"{parent_user.full_name} ({parent_user.user_code})"
+    return {
+        "success": True,
+        "data": {
+            "parent_member": parent or '',
+        }
+    }
+
+@router.put("/mapping-manager")
+async def update_mapping_manager(
+    mapping_data: MappingManagerUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update mapping — requires MPIN verification"""
+    try:
+        if not verify_security_pin(current_user, mapping_data.security_pin, db):
+            raise HTTPException(status_code=400, detail="Invalid security PIN (MPIN)")
+        
+        # Find the parent user by user_code or name
+        parent = db.query(User).filter(
+            (User.user_code == mapping_data.parent_member) |
+            (User.full_name == mapping_data.parent_member)
+        ).first()
+        
+        if not parent:
+            raise HTTPException(status_code=400, detail="Parent member not found")
+        if parent.id == current_user.id:
+            raise HTTPException(status_code=400, detail="Cannot map to yourself")
+        
+        current_user.parent_id = parent.id
+        current_user.updated_at = datetime.utcnow()
+        db.commit()
+        return {"success": True, "message": "Mapping updated successfully"}
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating mapping: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update mapping")
 
 # ========== PROFILE STATUS API ==========
 
@@ -696,16 +892,29 @@ async def get_profile_status(
     """Get profile completion status and available sections"""
     try:
         # Check what sections are available for the user
-        available_sections = {
-            "profile_details": True,
-            "password_manager": True,
-            "pin_manager": True,
-            "bank_details": True,  # Now available for all users including superadmin
-            "kyc_details": not is_superadmin(current_user),
-            "certificate_manager": not is_superadmin(current_user),
-            "role_manager": not is_superadmin(current_user),
-            "mapping_manager": not is_superadmin(current_user)
-        }
+        # SuperAdmin gets access to ALL sections
+        if is_superadmin(current_user):
+            available_sections = {
+                "profile_details": True,
+                "password_manager": True,
+                "pin_manager": True,
+                "bank_details": True,
+                "kyc_details": True,
+                "certificate_manager": True,
+                "role_manager": True,
+                "mapping_manager": True,
+            }
+        else:
+            available_sections = {
+                "profile_details": True,
+                "password_manager": True,
+                "pin_manager": True,
+                "bank_details": True,
+                "kyc_details": True,
+                "certificate_manager": True,
+                "role_manager": True,
+                "mapping_manager": True,
+            }
         
         # Check KYC status for non-superadmin users
         kyc_status = None
