@@ -126,12 +126,16 @@ def init_superadmin(db: Session) -> None:
 
         if superadmin:
             logger.info(f"Superadmin user with user_code {settings.SUPERADMIN_USER_CODE} already exists")
-            # Update password and ensure correct role
+            # Sync all superadmin fields from .env to keep DB in sync
             superadmin.hashed_password = get_password_hash(settings.SUPERADMIN_PASSWORD)
             superadmin.role_id = super_admin_role.id
             superadmin.is_active = True
+            superadmin.username = settings.SUPERADMIN_USERNAME
+            superadmin.email = settings.SUPERADMIN_EMAIL
+            superadmin.phone = settings.SUPERADMIN_PHONE
+            superadmin.full_name = settings.SUPERADMIN_NAME
             db.commit()
-            logger.info("Updated existing superadmin user password and role")
+            logger.info("Updated existing superadmin user (password, role, email, phone, name)")
             return
 
         # Check for existing user by email
