@@ -370,6 +370,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 async def login_otp_verify(request: schemas.OTPVerifyRequest, db: Session = Depends(get_db)):
     # Check if the user exists and has a valid role
     user = db.query(User).filter(
+        (User.username == request.identifier) |
         (User.email == request.identifier) |
         (User.phone == request.identifier) |
         (User.user_code == request.identifier)
