@@ -26,8 +26,28 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    """Generate password hash."""
-    return pwd_context.hash(password)
+    """Generate password hash.
+
+    bcrypt (used by passlib here) only processes the first 72 bytes of the
+    password. Very long secrets can cause runtime errors in some backend
+    implementations. To keep behaviour predictable and avoid crashes during
+    startup (for example when initialising the superadmin user), we
+    explicitly truncate the password to 72 bytes before hashing.
+    """
+    if password is None:
+        raise ValueError("Password must not be None")
+
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        logger.warning(
+            "Password length exceeds 72 bytes; truncating to maintain bcrypt compatibility."
+        )
+        password_bytes = password_bytes[:72]
+
+    # Decode back to text for passlib; any partial multi-byte sequence at the
+    # boundary is ignored.
+    safe_password = password_bytes.decode("utf-8", errors="ignore")
+    return pwd_context.hash(safe_password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a new JWT access token."""
