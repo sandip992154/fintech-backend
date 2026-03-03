@@ -65,13 +65,43 @@ async def create_wallet(
         )
 
 
+@router.get("/wallet/balance")
+async def get_wallet_balance_current_user(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user's wallet balance"""
+    try:
+        wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+        
+        if not wallet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Wallet not found"
+            )
+        
+        return {
+            "balance": wallet.balance,
+            "currency": "INR",
+            "last_updated": wallet.last_updated.isoformat(),
+            "is_active": wallet.is_active
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
 @router.get("/wallet/{user_id}")
 async def get_wallet_balance(
     user_id: int,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get wallet balance for a user"""
+    """Get wallet balance for a user""
     try:
         wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
         
@@ -274,34 +304,7 @@ async def get_transactions(
         )
 
 
-@router.get("/wallet/balance")
-async def get_wallet_balance_legacy(
-    current_user = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get current user's wallet balance"""
-    try:
-        wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
-        
-        if not wallet:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Wallet not found"
-            )
-        
-        return {
-            "balance": wallet.balance,
-            "currency": "INR",
-            "last_updated": wallet.last_updated.isoformat(),
-            "is_active": wallet.is_active
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+# /wallet/balance is now defined earlier in the file (above /wallet/{user_id}) to avoid route conflict
 
 
 @router.get("/history")
