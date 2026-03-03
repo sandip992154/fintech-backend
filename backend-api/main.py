@@ -222,7 +222,7 @@ app.include_router(mpin_router)
 
 # Include new routers for enhanced user management
 app.include_router(user_management_router, prefix="/api/v1/user-management", tags=["User Management"])
-app.include_router(mpin_management_router, prefix="/api/v1/mpin", tags=["MPIN Management"])
+app.include_router(mpin_management_router, prefix="/api/v1", tags=["MPIN Management"])
 app.include_router(profile_management_router, prefix="/api/v1/profile", tags=["Profile Management"])
 app.include_router(pin_reset_router, prefix="/api/v1", tags=["PIN Management"])
 
