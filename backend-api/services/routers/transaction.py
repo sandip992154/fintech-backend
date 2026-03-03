@@ -26,6 +26,34 @@ router = APIRouter(prefix="/transactions", tags=["Transactions"])
 logger = logging.getLogger(__name__)
 
 # Wallet Operations
+@router.get("/wallet/balance")
+async def get_my_wallet_balance(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user's wallet balance — must be defined BEFORE /wallet/{user_id}"""
+    try:
+        wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+        if not wallet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Wallet not found"
+            )
+        return {
+            "balance": wallet.balance,
+            "currency": "INR",
+            "last_updated": wallet.last_updated.isoformat(),
+            "is_active": wallet.is_active
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
 @router.get("/wallet/{user_id}", response_model=WalletOut)
 async def get_wallet_balance(user_id: int, db: Session = Depends(get_db)):
     """
