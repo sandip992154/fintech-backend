@@ -395,6 +395,37 @@ async def reset_mpin(
         success=True
     )
 
+@router.get("/stats")
+async def get_mpin_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get aggregate MPIN statistics (Admin only)"""
+    if current_user.role.name not in ["super_admin", "admin"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    total_users = db.query(MPIN).count()
+    mpin_set = db.query(MPIN).filter(MPIN.is_set == True).count()
+    locked = db.query(MPIN).filter(
+        MPIN.locked_until != None,
+        MPIN.locked_until > datetime.utcnow()
+    ).count()
+    # Expired: MPIN set but not used in the last 90 days
+    expiry_threshold = datetime.utcnow() - timedelta(days=90)
+    expired = db.query(MPIN).filter(
+        MPIN.is_set == True,
+        MPIN.last_used != None,
+        MPIN.last_used < expiry_threshold
+    ).count()
+
+    return {
+        "total_users": total_users,
+        "mpin_set": mpin_set,
+        "locked": locked,
+        "expired": expired
+    }
+
+
 @router.delete("/remove")
 async def remove_mpin(
     current_user: User = Depends(get_current_user),
