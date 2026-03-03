@@ -54,6 +54,58 @@ async def get_my_wallet_balance(
         )
 
 
+@router.get("/wallet/my-transactions")
+async def get_my_wallet_transactions(
+    limit: int = 20,
+    offset: int = 0,
+    start_date: str = None,
+    end_date: str = None,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user's own wallet transactions — must be before /wallet/{user_id}"""
+    try:
+        wallet = db.query(Wallet).filter(Wallet.user_id == current_user.id).first()
+        if not wallet:
+            return {"success": True, "data": {"transactions": [], "total_count": 0, "wallet_balance": 0}}
+
+        query = db.query(WalletTransaction).filter(WalletTransaction.wallet_id == wallet.id)
+
+        if start_date:
+            query = query.filter(WalletTransaction.created_at >= start_date)
+        if end_date:
+            query = query.filter(WalletTransaction.created_at <= end_date)
+
+        total_count = query.count()
+        transactions = query.order_by(WalletTransaction.created_at.desc()).offset(offset).limit(limit).all()
+
+        return {
+            "success": True,
+            "data": {
+                "wallet_id": wallet.id,
+                "wallet_balance": float(wallet.balance),
+                "total_count": total_count,
+                "limit": limit,
+                "offset": offset,
+                "transactions": [
+                    {
+                        "id": txn.id,
+                        "amount": float(txn.amount),
+                        "transaction_type": txn.transaction_type,
+                        "reference_id": txn.reference_id,
+                        "remark": txn.remark,
+                        "balance_after": float(txn.balance_after) if txn.balance_after is not None else None,
+                        "created_at": txn.created_at.isoformat() if txn.created_at else None
+                    }
+                    for txn in transactions
+                ]
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error fetching my transactions: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/wallet/{user_id}", response_model=WalletOut)
 async def get_wallet_balance(user_id: int, db: Session = Depends(get_db)):
     """
