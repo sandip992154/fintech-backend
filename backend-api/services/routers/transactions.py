@@ -101,7 +101,7 @@ async def get_wallet_balance(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get wallet balance for a user""
+    """Get wallet balance for a user"""
     try:
         wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
         
