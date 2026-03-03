@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Body
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from database.database import get_db
@@ -1034,10 +1034,13 @@ async def get_pending_kyc_applications(
         # Build counts for each status
         from sqlalchemy import func
         status_counts = db.query(KYCDocument.status, func.count(KYCDocument.id)).group_by(KYCDocument.status).all()
-        counts = {"pending": 0, "approved": 0, "rejected": 0, "total": 0}
+        counts = {"pending": 0, "approved": 0, "rejected": 0, "hold": 0, "total": 0}
         for s, c in status_counts:
             counts["total"] += c
             key = s.value if hasattr(s, "value") else str(s).lower()
+            # Map "confirmed" enum value to "approved" for frontend display
+            if key == "confirmed":
+                key = "approved"
             if key in counts:
                 counts[key] = c
 
@@ -1058,6 +1061,87 @@ async def get_pending_kyc_applications(
         )
     except Exception as e:
         logger.error(f"Unexpected error retrieving KYC applications: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": True, "message": str(e)})
+
+
+@router.post("/approve/{user_code}")
+async def approve_kyc(
+    user_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    body: Optional[Dict[str, Any]] = Body(None)
+):
+    """
+    Approve a KYC application. Convenience wrapper around /{user_code}/verify with action=accept.
+    """
+    from services.schemas.kyc_schemas import KYCVerifyRequest
+    verification = KYCVerifyRequest(action="accept", rejection_reason=None)
+    return await verify_kyc(user_code=user_code, verification=verification, db=db, current_user=current_user)
+
+
+@router.post("/reject/{user_code}")
+async def reject_kyc(
+    user_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    body: Optional[Dict[str, Any]] = Body(None)
+):
+    """
+    Reject a KYC application. Convenience wrapper around /{user_code}/verify with action=reject.
+    """
+    from services.schemas.kyc_schemas import KYCVerifyRequest
+    reason = (body or {}).get("rejection_reason") or (body or {}).get("reason") or "Rejected by admin"
+    verification = KYCVerifyRequest(action="reject", rejection_reason=reason)
+    return await verify_kyc(user_code=user_code, verification=verification, db=db, current_user=current_user)
+
+
+@router.get("/review/{user_code}")
+async def review_kyc_by_user_code(
+    user_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get KYC details for a specific user by user_code (for admin review).
+    """
+    try:
+        allowed_roles = ["superadmin", "super_admin", "admin", "whitelabel",
+                         "master_distributor", "distributor"]
+        if current_user.role.name not in allowed_roles:
+            return KYCErrorResponse.forbidden_error(
+                message="Access requires administrative privileges",
+                details={"current_role": current_user.role.name}
+            )
+        user = db.query(User).filter(User.user_code == user_code).first()
+        if not user:
+            return KYCErrorResponse.not_found_error("User", user_code)
+        kyc = db.query(KYCDocument).filter(KYCDocument.user_id == user.id).first()
+        if not kyc:
+            return KYCErrorResponse.not_found_error("KYC document", user_code)
+        return {
+            "id": kyc.id, "user_id": kyc.user_id,
+            "user": {"id": user.id, "email": user.email, "full_name": user.full_name,
+                     "phone": user.phone, "user_code": user.user_code,
+                     "role": user.role.name if user.role else None},
+            "full_name": kyc.full_name, "date_of_birth": kyc.date_of_birth,
+            "gender": kyc.gender, "email": kyc.email, "phone": kyc.phone,
+            "address": kyc.address, "city": kyc.city, "state": kyc.state,
+            "pin_code": kyc.pin_code, "business_name": kyc.business_name,
+            "pan_card_no": kyc.pan_card_no, "aadhar_card_no": kyc.aadhar_card_no,
+            "profile_photo_url": kyc.profile_photo_url,
+            "aadhar_card_url": kyc.aadhar_card_url, "pan_card_url": kyc.pan_card_url,
+            "company_pan_card_url": kyc.company_pan_card_url,
+            "signature_url": kyc.signature_url,
+            "business_license_url": kyc.business_license_url,
+            "gst_certificate_url": kyc.gst_certificate_url,
+            "status": kyc.status, "submitted_at": kyc.submitted_at,
+            "verified_at": kyc.verified_at,
+            "rejection_reason": kyc.rejection_reason
+        }
+    except SQLAlchemyError as e:
+        logger.error(f"DB error in review_kyc_by_user_code: {e}")
+        return KYCErrorResponse.database_error(operation="review KYC", details=str(e))
+    except Exception as e:
         raise HTTPException(status_code=500, detail={"error": True, "message": str(e)})
 
 
