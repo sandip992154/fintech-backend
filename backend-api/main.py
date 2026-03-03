@@ -240,7 +240,7 @@ app.include_router(commission_router.router, prefix="/api/v1", tags=["Commission
 
 from services.routers import kyc
 
-app.include_router(kyc.router)
+app.include_router(kyc.router, prefix="/api/v1")
 
 # Startup event
 @app.on_event("startup")
