@@ -457,13 +457,21 @@ async def update_mpin(
     try:
         logger.info(f"Starting MPIN update for user {current_user.id}")
         
-        # Verify OTP before updating PIN
+        # Verify OTP before updating PIN — accept both pin_change and pin_setup purposes
         otp_verification = otp_service.verify_otp(
             db, 
             current_user.id, 
             mpin_data.otp, 
             "pin_change"
         )
+        if not otp_verification["success"]:
+            # Try pin_setup purpose as fallback (first-time MPIN setup)
+            otp_verification = otp_service.verify_otp(
+                db,
+                current_user.id,
+                mpin_data.otp,
+                "pin_setup"
+            )
         
         # BUG FIX: expose only a generic error to avoid leaking internal OTP state.
         # Previously: detail=otp_verification["message"] — could reveal system internals.
@@ -925,6 +933,10 @@ async def get_profile_status(
             else:
                 kyc_status = "not_submitted"
         
+        # Check MPIN status
+        mpin_record = db.query(MPIN).filter(MPIN.user_id == current_user.id).first()
+        mpin_is_set = mpin_record is not None and mpin_record.is_set
+
         return {
             "success": True,
             "data": {
@@ -932,7 +944,8 @@ async def get_profile_status(
                 "is_superadmin": is_superadmin(current_user),
                 "available_sections": available_sections,
                 "kyc_status": kyc_status,
-                "kyc_required": not is_superadmin(current_user)
+                "kyc_required": not is_superadmin(current_user),
+                "mpin_is_set": mpin_is_set
             }
         }
         
