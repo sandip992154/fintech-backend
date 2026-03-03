@@ -147,57 +147,23 @@ async def shutdown_event():
     """FastAPI shutdown event"""
     logger.info("🛑 === FASTAPI SHUTDOWN EVENT: Server is stopping ===")
 
-# Configure CORS with environment-specific origins
-origins = [
-    "https://bandarupay.pro",
-    "https://www.bandarupay.pro",
-    "https://admin.bandarupay.pro",
-    "https://customer.bandarupay.pro",
-    "https://mds.bandarupay.pro",
-    "https://retailer.bandarupay.pro",
-    "https://superadmin.bandarupay.pro",
-    "https://whitelable.bandarupay.pro",
-    "https://backend.bandarupay.pro",
-    # Render deployed URLs - ALLOW ALL RENDER DOMAINS
-    # This will match any *.onrender.com domain
-    # Development URLs
-    "http://localhost:5172",
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://localhost:8000",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "http://localhost:5176",
-    "http://localhost:5177",
-    "http://localhost:5178",
-    "http://localhost:5179",
-    "http://127.0.0.1:5172",
-    "http://127.0.0.1:5173",
-]
-
-# Add support for all Render domains with allow_origin_regex
+# Configure CORS - JWT tokens are sent via Bearer header (localStorage), not cookies.
+# No credentials (withCredentials) needed on frontend, so allow_origins=["*"] is safe.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_origin_regex=r"https://.*\.onrender\.com",  # Allow all *.onrender.com domains
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=[
-        "Content-Type", 
-        "Authorization", 
+        "Content-Type",
+        "Authorization",
         "Accept",
-        "Origin", 
+        "Origin",
         "X-Requested-With",
         "Access-Control-Request-Method",
         "Access-Control-Request-Headers",
-        "Access-Control-Allow-Origin"
     ],
-    expose_headers=[
-        "Content-Length",
-        "Access-Control-Allow-Origin",
-        "Access-Control-Allow-Credentials"
-    ],
-    max_age=600  # Cache preflight requests for 10 minutes
+    max_age=600
 )
 
 # Test CORS endpoint
