@@ -926,6 +926,141 @@ async def resubmit_kyc_form(
         current_user=current_user
     )
 
+@router.get("/pending")
+async def get_pending_kyc_applications(
+    status: Optional[str] = "all",
+    search: Optional[str] = "",
+    role: Optional[str] = "all",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get KYC applications with optional filtering by status, search term, and role.
+    Accessible by admin roles. Called by the admin KYC Management page.
+    """
+    logger.info(f"KYC pending applications request by user {current_user.id} - status={status}, search={search}, role={role}")
+
+    try:
+        allowed_roles = ["superadmin", "super_admin", "admin", "whitelabel", "master_distributor",
+                         "distributor", "retailer", "customer"]
+        if current_user.role.name not in ["superadmin", "super_admin", "admin", "whitelabel",
+                                           "master_distributor", "distributor"]:
+            return KYCErrorResponse.forbidden_error(
+                message="Access to KYC applications requires administrative privileges",
+                details={
+                    "required_roles": ["superadmin", "admin", "whitelabel", "master_distributor", "distributor"],
+                    "current_role": current_user.role.name,
+                    "action": "contact_administrator_for_access"
+                }
+            )
+
+        query = db.query(KYCDocument).join(User)
+
+        # Filter by status
+        if status and status.lower() not in ("all", ""):
+            try:
+                status_enum = KYCStatus(status.lower())
+                query = query.filter(KYCDocument.status == status_enum)
+            except ValueError:
+                pass  # ignore invalid status values, return all
+
+        # Filter by role
+        if role and role.lower() not in ("all", ""):
+            from services.models.models import Role
+            query = query.join(Role, User.role_id == Role.id).filter(Role.name == role.lower())
+
+        # Filter by search term (name, email, phone)
+        if search and search.strip():
+            search_term = f"%{search.strip()}%"
+            from sqlalchemy import or_
+            query = query.filter(
+                or_(
+                    User.full_name.ilike(search_term),
+                    User.email.ilike(search_term),
+                    User.phone.ilike(search_term),
+                    User.user_code.ilike(search_term)
+                )
+            )
+
+        query = query.order_by(KYCDocument.submitted_at.desc())
+        kyc_docs = query.all()
+
+        kyc_list = []
+        for kyc in kyc_docs:
+            kyc_list.append({
+                "id": kyc.id,
+                "user_id": kyc.user_id,
+                "user": {
+                    "id": kyc.user.id,
+                    "email": kyc.user.email,
+                    "full_name": kyc.user.full_name,
+                    "phone": kyc.user.phone,
+                    "user_code": kyc.user.user_code,
+                    "role": kyc.user.role.name if kyc.user.role else None
+                },
+                "full_name": kyc.full_name,
+                "date_of_birth": kyc.date_of_birth,
+                "gender": kyc.gender,
+                "email": kyc.email,
+                "phone": kyc.phone,
+                "address": kyc.address,
+                "city": kyc.city,
+                "state": kyc.state,
+                "pin_code": kyc.pin_code,
+                "business_name": kyc.business_name,
+                "business_type": kyc.business_type,
+                "business_address": kyc.business_address,
+                "company_pan_number": kyc.company_pan_number,
+                "bank_name": kyc.bank_name,
+                "account_number": kyc.account_number,
+                "ifsc_code": kyc.ifsc_code,
+                "account_holder_name": kyc.account_holder_name,
+                "branch_name": kyc.branch_name,
+                "pan_card_no": kyc.pan_card_no,
+                "aadhar_card_no": kyc.aadhar_card_no,
+                "profile_photo_url": kyc.profile_photo_url,
+                "aadhar_card_url": kyc.aadhar_card_url,
+                "pan_card_url": kyc.pan_card_url,
+                "company_pan_card_url": kyc.company_pan_card_url,
+                "signature_url": kyc.signature_url,
+                "business_license_url": kyc.business_license_url,
+                "gst_certificate_url": kyc.gst_certificate_url,
+                "status": kyc.status,
+                "submitted_at": kyc.submitted_at,
+                "verified_at": kyc.verified_at,
+                "rejection_reason": kyc.rejection_reason
+            })
+
+        # Build counts for each status
+        from sqlalchemy import func
+        status_counts = db.query(KYCDocument.status, func.count(KYCDocument.id)).group_by(KYCDocument.status).all()
+        counts = {"pending": 0, "approved": 0, "rejected": 0, "total": 0}
+        for s, c in status_counts:
+            counts["total"] += c
+            key = s.value if hasattr(s, "value") else str(s).lower()
+            if key in counts:
+                counts[key] = c
+
+        logger.info(f"Retrieved {len(kyc_list)} KYC applications")
+        return {
+            "data": kyc_list,
+            "total": len(kyc_list),
+            "counts": counts,
+            "status": "success",
+            "message": f"Found {len(kyc_list)} KYC applications"
+        }
+
+    except SQLAlchemyError as e:
+        logger.error(f"Database error retrieving KYC applications: {str(e)}")
+        return KYCErrorResponse.database_error(
+            operation="retrieve KYC applications",
+            details=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error retrieving KYC applications: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": True, "message": str(e)})
+
+
 @router.get("/list/pending")
 async def list_pending_kyc(
     db: Session = Depends(get_db),
