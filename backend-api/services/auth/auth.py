@@ -248,8 +248,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Fetch user from DB
-        user = db.query(User).filter(User.id == user_id, User.user_code == user_code).first()
+        # Fetch user from DB with role preloaded (avoids extra query in /me)
+        from sqlalchemy.orm import joinedload
+        user = (
+            db.query(User)
+            .options(joinedload(User.role))
+            .filter(User.id == user_id, User.user_code == user_code)
+            .first()
+        )
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -804,8 +810,8 @@ async def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
 @router.get("/me", response_model=schemas.UserOut)
 async def get_current_user_info(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get current user information including role details"""
-    user_role = db.query(Role).filter(Role.id == current_user.role_id).first()
-    role_name = user_role.name if user_role else "customer"
+    # Role is preloaded via joinedload in get_current_user — no extra DB query needed
+    role_name = current_user.role.name if current_user.role else "customer"
     
     return schemas.UserOut(
         id=current_user.id,

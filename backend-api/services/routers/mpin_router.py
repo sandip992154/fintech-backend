@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Any
 from database.database import get_db
+from services.auth.auth import get_current_user
+from services.models.models import User
 from services.auth.mpin_service import (
     get_user_by_identifier,
     verify_user_otp,
@@ -28,29 +30,21 @@ router = APIRouter(
 @router.post("/setup", response_model=MPINResponse)
 async def setup_mpin(
     setup_data: MPINSetup,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ) -> Any:
     """
-    Setup MPIN for a user.
+    Setup MPIN for the authenticated user.
     
-    - Accepts email, phone, or user_code as identifier
-    - Requires OTP verification
+    - User is identified via Bearer token
     - MPIN must be exactly 4 digits
     """
-    user = get_user_by_identifier(db, setup_data.identifier)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-        
-    if not verify_user_otp(db, user, setup_data.otp):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid OTP"
-        )
-        
-    create_mpin(db, user, setup_data.mpin)
+    # Block re-setup if MPIN already exists for this user
+    mpin_status = get_mpin_status(db, current_user)
+    if mpin_status.get("is_set"):
+        return {"message": "MPIN is already set. Use /update or /reset to change it.", "status": False}
+
+    create_mpin(db, current_user, setup_data.mpin)
     return {"message": "MPIN setup successful", "status": True}
 
 @router.post("/login", response_model=MPINResponse)

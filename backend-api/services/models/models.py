@@ -122,8 +122,12 @@ class RefreshToken(Base):
     revoked = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     user = relationship("User", back_populates="tokens")
+
+    __table_args__ = (
+        Index("ix_refresh_tokens_user_active", "user_id", "revoked", "expires_at"),
+    )
 
 
 # ---------- Bank Account Model ----------

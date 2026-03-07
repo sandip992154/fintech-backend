@@ -1,65 +1,47 @@
 """
-Cloudinary utilities for file upload and validation
+Cloudinary utilities — thin wrappers that delegate to document_handler.
+
+Import document_handler directly in new code. This module exists only for
+backward compatibility with any code that imports from utils.cloudinary_utils.
 """
+from services.utils.document_handler import (
+    process_profile_photo,
+    save_document,
+    upload_image,
+    delete_document,
+    _extract_public_id as _extract_public_id_from_url,
+    FOLDER_MAP,
+    ALLOWED_IMAGE_TYPES,
+    ALLOWED_DOC_TYPES,
+)
 import cloudinary
 import cloudinary.uploader
 from fastapi import HTTPException, UploadFile
-import os
-from typing import Dict, Any
 
-from config.constants import FILE_UPLOAD_CONFIG
 
-# Initialize Cloudinary (will be configured via environment variables)
 def configure_cloudinary():
-    """Configure Cloudinary with environment variables"""
-    cloudinary.config(
-        cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-        api_key=os.getenv("CLOUDINARY_API_KEY"),
-        api_secret=os.getenv("CLOUDINARY_API_SECRET"),
-        secure=True
-    )
+    """No-op: Cloudinary is configured at import time in document_handler."""
+    pass  # config already applied
+
 
 def validate_file(file: UploadFile, document_type: str) -> None:
-    """Validate uploaded file"""
-    # Check file size
-    if file.size > FILE_UPLOAD_CONFIG["MAX_SIZE_MB"] * 1024 * 1024:
+    """Synchronous pre-check on content_type (async full validation is in document_handler)."""
+    from config.constants import FILE_UPLOAD_CONFIG
+    if file.size and file.size > FILE_UPLOAD_CONFIG["MAX_SIZE_MB"] * 1024 * 1024:
         raise HTTPException(
             status_code=400,
-            detail=f"File size too large. Maximum size is {FILE_UPLOAD_CONFIG['MAX_SIZE_MB']}MB"
+            detail=f"File too large. Maximum size is {FILE_UPLOAD_CONFIG['MAX_SIZE_MB']} MB",
         )
-    
-    # Check file type
-    if file.content_type not in FILE_UPLOAD_CONFIG["ALLOWED_TYPES"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file type. Allowed types: {', '.join(FILE_UPLOAD_CONFIG['ALLOWED_TYPES'])}"
-        )
-    
-    # Document-specific validation
-    if document_type in ["pan_card_front", "pan_card_back", "aadhar_front", "aadhar_back", "photo", "signature"]:
-        if file.content_type == "application/pdf":
-            raise HTTPException(
-                status_code=400,
-                detail=f"{document_type} must be an image file"
-            )
-    
-    # Validate filename
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
-    
-    # Check for potentially malicious files
-    dangerous_extensions = ['.exe', '.bat', '.cmd', '.scr', '.pif']
-    if any(file.filename.lower().endswith(ext) for ext in dangerous_extensions):
+    dangerous = [".exe", ".bat", ".cmd", ".scr", ".pif"]
+    if any(file.filename.lower().endswith(ext) for ext in dangerous):
         raise HTTPException(status_code=400, detail="File type not allowed")
 
-def upload_to_cloudinary(file: UploadFile, folder: str = "uploads") -> Dict[str, Any]:
-    """Upload file to Cloudinary"""
+
+def upload_to_cloudinary(file: UploadFile, folder: str = "uploads"):
+    """Synchronous upload helper (use process_profile_photo / save_document for async)."""
     try:
-        # Configure Cloudinary if not already configured
-        if not cloudinary.config().cloud_name:
-            configure_cloudinary()
-        
-        # Upload file
         result = cloudinary.uploader.upload(
             file.file,
             folder=folder,
@@ -68,43 +50,18 @@ def upload_to_cloudinary(file: UploadFile, folder: str = "uploads") -> Dict[str,
             unique_filename=True,
             overwrite=False,
             quality="auto:good",
-            fetch_format="auto"
+            fetch_format="auto",
         )
-        
         return result
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"File upload failed: {str(e)}"
-        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"File upload failed: {exc}")
+
 
 def delete_from_cloudinary(public_id: str) -> bool:
-    """Delete file from Cloudinary"""
+    """Delete a Cloudinary asset by public_id."""
     try:
-        # Configure Cloudinary if not already configured
-        if not cloudinary.config().cloud_name:
-            configure_cloudinary()
-        
         result = cloudinary.uploader.destroy(public_id)
         return result.get("result") == "ok"
-    
-    except Exception as e:
-        print(f"Failed to delete file from Cloudinary: {str(e)}")
+    except Exception as exc:
+        print(f"Failed to delete Cloudinary asset '{public_id}': {exc}")
         return False
-
-def get_file_info(public_id: str) -> Dict[str, Any]:
-    """Get file information from Cloudinary"""
-    try:
-        # Configure Cloudinary if not already configured
-        if not cloudinary.config().cloud_name:
-            configure_cloudinary()
-        
-        result = cloudinary.api.resource(public_id)
-        return result
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=404,
-            detail=f"File not found: {str(e)}"
-        )

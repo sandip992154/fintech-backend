@@ -12,11 +12,12 @@ from typing import List
 
 from database.database import get_db
 from services.auth.auth import get_current_user, get_password_hash, verify_password
-from services.models.models import User, Role, BankAccount, OTPRequest as OTPRequestModel
+from services.models.models import User, Role, BankAccount, OTPRequest as OTPRequestModel, CompanyDetails
 from services.models.user_models import UserProfile, KYCDocument, MPIN
 from config.constants import ROLE_HIERARCHY
 from utils.security import get_password_hash as hash_password
 from services.cloudinary_service import CloudinaryService
+from services.utils.document_handler import upload_image
 from services.otp_service import otp_service
 
 logger = logging.getLogger(__name__)
@@ -399,7 +400,50 @@ async def upload_profile_photo(
             detail="Failed to upload profile photo"
         )
 
-# ========== PASSWORD MANAGEMENT API ==========
+
+@router.post("/upload-company-logo")
+async def upload_company_logo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload (or replace) the company logo. Stores it on Cloudinary and saves
+    the URL in the company_details table. Creates the company_details row if
+    one does not yet exist."""
+    try:
+        logo_url = await upload_image(file, category="company_logo", width=200, height=200, crop="fit")
+
+        company = db.query(CompanyDetails).first()
+        if company:
+            old_url = company.company_logo
+            company.company_logo = logo_url
+        else:
+            company = CompanyDetails(
+                company_name="My Company",
+                company_logo=logo_url,
+            )
+            db.add(company)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Company logo uploaded successfully",
+            "data": {"company_logo": logo_url},
+        }
+
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error uploading company logo: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload company logo",
+        )
+
+
+# ========== PASSWORD MANAGEMENT API ===========
 
 @router.put("/password") 
 async def update_password(

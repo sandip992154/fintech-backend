@@ -3,11 +3,10 @@ from typing import Optional
 from datetime import datetime
 
 class MPINBase(BaseModel):
-    mpin: constr(min_length=4, max_length=6, pattern=r'^\d+$')
+    mpin: constr(min_length=4, max_length=4, pattern=r'^\d{4}$')
 
 class MPINSetup(MPINBase):
-    identifier: str  # Can be email, phone, or user_code
-    otp: str
+    pass  # Only mpin is required; user is identified via auth token
 
 class MPINLogin(MPINBase):
     identifier: str

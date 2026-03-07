@@ -1,127 +1,255 @@
+"""
+Document handler — all uploads go to Cloudinary.
+Local filesystem is NOT used for image/document storage.
+
+Handles ALL image and document uploads project-wide:
+  - KYC documents (ID proofs, signatures, etc.)
+  - Profile photos (users and superadmin)
+  - Company logos and branding assets
+  - Service / operator icons
+  - Any other image or PDF the application needs to store
+"""
 import os
-import shutil
+import re
+import cloudinary
+import cloudinary.uploader
 from fastapi import UploadFile, HTTPException
-from typing import List
-import uuid
-from datetime import datetime
-from PIL import Image
 import filetype
-import aiofiles
 
-UPLOAD_DIR = "static/uploads"
-ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"]
-ALLOWED_DOC_TYPES = ["application/pdf"]
-MAX_IMAGE_SIZE = 2 * 1024 * 1024  # 2MB
-MAX_DOC_SIZE = 5 * 1024 * 1024    # 5MB
+# ---------------------------------------------------------------------------
+# Cloudinary configuration (reads from environment variables)
+# ---------------------------------------------------------------------------
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True,
+)
 
-# Create directories if they don't exist
-os.makedirs(f"{UPLOAD_DIR}/profile_photos", exist_ok=True)
-os.makedirs(f"{UPLOAD_DIR}/pan_cards", exist_ok=True)
-os.makedirs(f"{UPLOAD_DIR}/company_pan", exist_ok=True)
-os.makedirs(f"{UPLOAD_DIR}/aadhar_cards", exist_ok=True)
-os.makedirs(f"{UPLOAD_DIR}/address_proofs", exist_ok=True)
-os.makedirs(f"{UPLOAD_DIR}/signatures", exist_ok=True)
-os.makedirs(f"{UPLOAD_DIR}/business_licenses", exist_ok=True)
-os.makedirs(f"{UPLOAD_DIR}/gst_certificates", exist_ok=True)
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"]
+ALLOWED_DOC_TYPES   = ["application/pdf"]
+MAX_IMAGE_SIZE = 5  * 1024 * 1024   # 5 MB
+MAX_DOC_SIZE   = 10 * 1024 * 1024   # 10 MB
 
-async def validate_file(file: UploadFile, doc_type: str):
-    """Validate file type and size"""
-    # Read file content
+# Cloudinary folder mapping — covers KYC documents AND all other upload categories
+FOLDER_MAP = {
+    # ── KYC documents ────────────────────────────────────────────────────────
+    "profile_photo":    "kyc/profile_photos",
+    "photo":            "kyc/profile_photos",
+    "pan_card":         "kyc/pan_cards",
+    "company_pan":      "kyc/company_pan",
+    "company_pan_card": "kyc/company_pan",
+    "aadhar_card":      "kyc/aadhar_cards",
+    "address_proof":    "kyc/address_proofs",
+    "signature":        "kyc/signatures",
+    "business_license": "kyc/business_licenses",
+    "gst_certificate":  "kyc/gst_certificates",
+
+    # ── Branding / company assets ────────────────────────────────────────────
+    "company_logo":     "company/logos",
+    "company_banner":   "company/banners",
+    "company_notice":   "company/notices",
+
+    # ── Service / operator icons ─────────────────────────────────────────────
+    "service_icon":     "services/icons",
+    "operator_icon":    "services/operators",
+    "bank_logo":        "services/banks",
+
+    # ── Miscellaneous ────────────────────────────────────────────────────────
+    "quick_link_icon":  "setup/quick_links",
+    "permission_icon":  "setup/permissions",
+    "general":          "uploads/general",
+}
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+async def _read_and_validate(file: UploadFile, doc_type: str) -> bytes:
+    """Read file bytes, validate size and MIME type. Returns raw bytes."""
     content = await file.read()
-    await file.seek(0)  # Reset file pointer
-    
-    # Check file size
-    size_limit = MAX_IMAGE_SIZE if doc_type == "profile_photo" else MAX_DOC_SIZE
+    await file.seek(0)
+
+    is_photo = doc_type in ("profile_photo", "photo")
+    size_limit = MAX_IMAGE_SIZE if is_photo else MAX_DOC_SIZE
     if len(content) > size_limit:
         raise HTTPException(
             status_code=400,
-            detail=f"File size exceeds {size_limit/1024/1024}MB limit"
+            detail=f"File size exceeds {size_limit // (1024 * 1024)} MB limit",
         )
-    
-    # Check file type
+
     kind = filetype.guess(content)
     if kind is None:
         raise HTTPException(
             status_code=400,
-            detail="Cannot determine file type or file type not supported"
+            detail="Cannot determine file type. Only JPEG, PNG, and PDF are supported.",
         )
-    
-    file_type = kind.mime
-    if doc_type == "profile_photo" and file_type not in ALLOWED_IMAGE_TYPES:
+
+    mime = kind.mime
+    allowed = ALLOWED_IMAGE_TYPES if is_photo else ALLOWED_IMAGE_TYPES + ALLOWED_DOC_TYPES
+    if mime not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type. Allowed types: {', '.join(ALLOWED_IMAGE_TYPES)}"
+            detail=f"Invalid file type '{mime}'. Allowed: {', '.join(allowed)}",
         )
-    elif doc_type != "profile_photo" and file_type not in ALLOWED_IMAGE_TYPES + ALLOWED_DOC_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid file type. Allowed types: {', '.join(ALLOWED_IMAGE_TYPES + ALLOWED_DOC_TYPES)}"
-        )
+
+    return content
+
+
+def _extract_public_id(url: str) -> str | None:
+    """Extract Cloudinary public_id (with folder, without extension) from a secure_url.
+
+    Example URL:
+        https://res.cloudinary.com/dzsuwcti4/image/upload/v1234567890/kyc/pan_cards/file.jpg
+        → public_id = "kyc/pan_cards/file"
+    """
+    match = re.search(r"upload/(?:v\d+/)?(.+?)(?:\.[a-zA-Z0-9]+)?$", url)
+    return match.group(1) if match else None
+
+
+# ---------------------------------------------------------------------------
+# Public API — used by kyc.py router
+# ---------------------------------------------------------------------------
 
 async def process_profile_photo(file: UploadFile) -> str:
-    """Process and save profile photo"""
-    # Validate file
-    await validate_file(file, "profile_photo")
-    
-    # Generate unique filename
-    ext = os.path.splitext(file.filename)[1]
-    filename = f"{uuid.uuid4()}{ext}"
-    filepath = f"{UPLOAD_DIR}/profile_photos/{filename}"
-    
-    # Save file
-    async with aiofiles.open(filepath, 'wb') as f:
-        content = await file.read()
-        await f.write(content)
-    
-    # Resize image to passport size (60px X 80px)
-    with Image.open(filepath) as img:
-        img = img.resize((60, 80))
-        img.save(filepath)
-    
-    return f"/static/uploads/profile_photos/{filename}"
+    """Upload profile photo to Cloudinary with face-fill crop. Returns secure_url."""
+    content = await _read_and_validate(file, "profile_photo")
 
-async def save_document(file: UploadFile, doc_type: str, user_id: int) -> str:
-    """Save document and return URL"""
-    # Validate file
-    await validate_file(file, doc_type)
-    
-    # Map document types to directories
-    type_dirs = {
-        "pan_card": "pan_cards",
-        "company_pan": "company_pan",
-        "company_pan_card": "company_pan",
-        "aadhar_card": "aadhar_cards",
-        "address_proof": "address_proofs",
-        "photo": "profile_photos",
-        "signature": "signatures",
-        "business_license": "business_licenses",
-        "gst_certificate": "gst_certificates"
-    }
-    
-    if doc_type not in type_dirs:
-        raise HTTPException(status_code=400, detail=f"Invalid document type: {doc_type}. Allowed types: {', '.join(type_dirs.keys())}")
-    
-    # Generate unique filename with user_id
-    ext = os.path.splitext(file.filename)[1]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"user{user_id}_{timestamp}{ext}"
-    filepath = f"{UPLOAD_DIR}/{type_dirs[doc_type]}/{filename}"
-    
-    # Save file
-    async with aiofiles.open(filepath, 'wb') as f:
-        content = await file.read()
-        await f.write(content)
-    
-    return f"/static/uploads/{type_dirs[doc_type]}/{filename}"
+    try:
+        result = cloudinary.uploader.upload(
+            content,
+            folder=FOLDER_MAP["profile_photo"],
+            resource_type="image",
+            transformation=[
+                {"width": 300, "height": 400, "crop": "fill", "gravity": "face"},
+                {"quality": "auto:good"},
+                {"fetch_format": "auto"},
+            ],
+            use_filename=True,
+            unique_filename=True,
+            overwrite=False,
+        )
+        return result["secure_url"]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Profile photo upload to Cloudinary failed: {exc}",
+        )
 
-async def delete_document(file_url: str):
-    """Delete document from storage"""
+
+async def save_document(file: UploadFile, doc_type: str, user_code: str) -> str:
+    """Upload a KYC document to Cloudinary. Returns secure_url."""
+    if doc_type not in FOLDER_MAP:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid document type '{doc_type}'. Allowed: {', '.join(FOLDER_MAP)}",
+        )
+
+    content = await _read_and_validate(file, doc_type)
+
+    try:
+        result = cloudinary.uploader.upload(
+            content,
+            folder=FOLDER_MAP[doc_type],
+            resource_type="auto",          # handles both images and PDFs
+            use_filename=True,
+            unique_filename=True,
+            overwrite=False,
+            quality="auto:good",
+        )
+        return result["secure_url"]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{doc_type} upload to Cloudinary failed: {exc}",
+        )
+
+
+async def delete_document(file_url: str) -> None:
+    """Delete a document from Cloudinary given its secure_url.
+
+    Silently skips legacy local paths (starting with /static/) so that
+    existing local-stored records don't cause errors.
+    """
     if not file_url:
         return
-        
+
+    # Legacy local path — skip silently
+    if file_url.startswith("/static/"):
+        return
+
+    public_id = _extract_public_id(file_url)
+    if not public_id:
+        return
+
+    # Detect resource type: PDFs are stored as 'raw' in Cloudinary
+    resource_type = "raw" if file_url.endswith(".pdf") else "image"
     try:
-        file_path = os.path.join("static", file_url.split("/static/")[1])
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception as e:
-        print(f"Error deleting file {file_url}: {str(e)}")
+        cloudinary.uploader.destroy(public_id, resource_type=resource_type)
+    except Exception as exc:
+        # Non-fatal: log and continue
+        print(f"Warning: could not delete Cloudinary asset '{public_id}': {exc}")
+
+
+async def upload_image(
+    file: UploadFile,
+    category: str = "general",
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    crop: str = "limit",
+) -> str:
+    """General-purpose image upload to Cloudinary.
+
+    Use this for any image that doesn't fit the KYC document flow:
+    company logos, service icons, banners, quick-link icons, etc.
+
+    Args:
+        file:     FastAPI UploadFile (images only — JPEG, PNG, WebP, GIF).
+        category: Key from FOLDER_MAP that determines the Cloudinary folder.
+                  Defaults to "general" → uploads/general.
+        width:    Optional resize width (applied only when provided).
+        height:   Optional resize height (applied only when provided).
+        crop:     Cloudinary crop mode (default "limit" — never upscale).
+
+    Returns:
+        Cloudinary secure_url (HTTPS).
+    """
+    folder = FOLDER_MAP.get(category, FOLDER_MAP["general"])
+    content = await _read_and_validate(file, "profile_photo")  # uses image-only validation
+
+    transformation: list = []
+    if width or height:
+        t: dict = {"crop": crop}
+        if width:
+            t["width"] = width
+        if height:
+            t["height"] = height
+        transformation.append(t)
+    transformation += [{"quality": "auto:good"}, {"fetch_format": "auto"}]
+
+    try:
+        result = cloudinary.uploader.upload(
+            content,
+            folder=folder,
+            resource_type="image",
+            transformation=transformation,
+            use_filename=True,
+            unique_filename=True,
+            overwrite=False,
+        )
+        return result["secure_url"]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{category} image upload to Cloudinary failed: {exc}",
+        )
